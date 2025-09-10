@@ -12,8 +12,11 @@ This project implements a comprehensive software simulation of a BLE-based indoo
 ## Installation
 
 ### 1. Clone the repository:
-'''bash
+```bash
 git clone https://github.com/23CSE362-edge-computing-2025-26-odd/capstone-project-03_cloud9
+```
 
 ### 2. Install dependencies:
-'pip install -r requirements.txt'
+```bash
+pip install -r requirements.txt
+```
