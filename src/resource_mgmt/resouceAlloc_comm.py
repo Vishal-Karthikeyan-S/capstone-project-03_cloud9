@@ -4,7 +4,7 @@ from collections import defaultdict
 import numpy as np
 import matplotlib.pyplot as plt
 
-## integrate simulation code 
+## integrate processing folder code 
 
 random_seed= 123
 simulation_time= 60.0            
