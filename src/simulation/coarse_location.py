@@ -15,11 +15,17 @@ edge_gateways = {
 door_position = np.array([0, 50])
 user_pos = np.array([5, 50])  
 
+res_x = (0, 20)     # restricted near door(to place materials)
+res_y = (40, 60)
 
-material_locations = {
-    f"MAT{str(i+1).zfill(3)}": [random.randint(0, 100), random.randint(0, 100)] # random material location
-    for i in range(50)
-}
+material_locations = {}
+for i in range(50):
+    while True:
+        x = random.randint(0, 100) # random loaction to place materials
+        y = random.randint(0, 100)
+        if not (res_x[0] <= x <= res_x[1] and res_y[0] <= y <= res_y[1]):
+            material_locations[f"MAT{str(i+1).zfill(3)}"] = [x, y]
+            break
 
 def get_rssi(tag_position):
     rssi_values = {}
