@@ -175,9 +175,6 @@ def path_loss_rssi(tx_pos, rx_pos, tx_power_dbm=0.0, path_loss_exponent=2.0, sig
     return rssi
 
 def material_task_source(env, bus, material_id, rate_per_min=10):
-    """
-    Generate tasks based on Person 2's material ID system and push to bus.
-    """
     inter = 60.0 / rate_per_min
     tag_pos = np.array(material_locations[material_id])
 
