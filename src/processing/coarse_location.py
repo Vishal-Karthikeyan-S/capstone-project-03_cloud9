@@ -52,6 +52,9 @@ def get_coarse_location(tag_position):
     
     return coarse_location, max_rssi, rssi_data
 
+def cloud_computation(tag_position): # dummy cloud function
+    print("Computing the exact location....waiting for cloud response...")
+
 def plot_all(material_positions, selected_tag_pos, coarse_zone): # plotting all values in graph
     plt.figure(figsize=(10, 10))
     
@@ -94,6 +97,15 @@ def simulation():
         print(f"Material Position: {tag_pos.tolist()}")
         print(f"RSSI values: {rssi_details}")
         print(f"Coarse Location Zone: {coarse_zone} (Max RSSI: {max_rssi:.2f} dBm)")
+
+        # for cloud
+        c_input = input("\nDo you want to compute the exact location via Cloud? (yes/no): ").strip().lower()
+        if c_input == 'yes':
+            refined_zone = cloud_computation(tag_pos)
+            print(f"Refined location: {refined_zone}")
+        else:
+            refined_zone = None
+            print("Skipping Cloud computation.")
         
         plot_all(material_locations, tag_pos, coarse_zone)
     else:
