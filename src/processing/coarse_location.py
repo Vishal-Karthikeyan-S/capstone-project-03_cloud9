@@ -83,10 +83,10 @@ def plot_all(material_positions, selected_tag_pos, coarse_zone): # plotting all 
     plt.show()
 
 def simulation():
-    print("Available Material IDs:")
+    print(f"\nAvailable Material IDs :")
     print(", ".join(list(material_locations.keys())))
     
-    material_id = input("\nEnter Material ID (e.g., MAT001): ").strip().upper()
+    material_id = input("\nEnter Material ID : ").strip().upper()
     
     if material_id in material_locations:
         tag_pos = np.array(material_locations[material_id])
@@ -94,9 +94,12 @@ def simulation():
         coarse_zone, max_rssi, rssi_details = get_coarse_location(tag_pos)
         
         print(f"\nMaterial ID: {material_id}")
-        print(f"Material Position: {tag_pos.tolist()}")
-        print(f"RSSI values: {rssi_details}")
-        print(f"Coarse Location Zone: {coarse_zone} (Max RSSI: {max_rssi:.2f} dBm)")
+        print("RSSI values:")
+        for zone, rssi in rssi_details.items():
+          print(f"  {zone}: {rssi:.2f} dBm\n")
+
+        print(f"\nMax RSSI: {max_rssi:.2f} dBm\n")
+        print(f"Coarse Location Zone: {coarse_zone}")
 
         # for cloud
         c_input = input("\nDo you want to compute the exact location via Cloud? (yes/no): ").strip().lower()
@@ -108,7 +111,20 @@ def simulation():
             print("Skipping Cloud computation.")
         
         plot_all(material_locations, tag_pos, coarse_zone)
+
+        m_input = input("\nHas the material picked up? (yes/no): ").strip().lower()
+        if m_input == 'yes':
+            del material_locations[material_id]   
+            print(f"Material {material_id} has been picked up and removed from the material list.")
+        
+        else:
+            print(f"Material is not picked up. It's still in list.")
+
+        plot_all(material_locations, tag_pos, coarse_zone)
+
     else:
         print(f"Material ID '{material_id}' not found!")
+
+
 
 simulation()
