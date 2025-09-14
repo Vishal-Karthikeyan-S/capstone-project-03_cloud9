@@ -27,12 +27,13 @@ for i in range(50):
             material_locations[f"MAT{str(i+1).zfill(3)}"] = [x, y]
             break
 
-def get_rssi(tag_position):
+def get_rssi(tag_position,add_noise=True):
     rssi_values = {}
 
     for zone, gw_pos in edge_gateways.items():
         distance = np.linalg.norm(tag_position - np.array(gw_pos)) # get tag's position
-        rssi = -59 - 10 * 2 * np.log10(distance + 1e-5) + np.random.normal(0, 3) # -> closer , less neg val. larger distance , positive val. and random noise
+        rnoise = np.random.normal(0, 3) if add_noise else 0
+        rssi = -59 - 10 * 2 * np.log10(distance + 1e-5) + rnoise # -> closer , less neg val. larger distance , positive val. and random noise
         rssi_values[zone] = rssi
     return rssi_values
 
@@ -61,34 +62,42 @@ def fingerprint_dataset(step):
             dataset.append({"pos": (x, y), "rssi": rssi_vector})
     return dataset
 
-dataset_ = fingerprint_dataset(step=5)
+
+dataset_ = fingerprint_dataset(step=1)
 
 from sklearn.neighbors import NearestNeighbors
 X = np.array([entry["rssi"] for entry in dataset_])
 y = np.array([entry["pos"] for entry in dataset_])
 
-knn = NearestNeighbors(n_neighbors=3, metric='euclidean')
-knn.fit(X)
+
+knn = NearestNeighbors(n_neighbors=7, metric='euclidean')
+knn.fit(X,y)
+
 
 def cloud_computation(tag_position): 
     print("Computing the exact location....waiting for cloud response...")
     
-    tag_rssi = list(get_rssi(tag_position).values()) # curr rssi values
+
+    tag_rssi = list(get_rssi(tag_position, add_noise=False).values()) # curr rssi values
+
     tag_rssi = np.array(tag_rssi).reshape(1, -1)
 
     distances, position = knn.kneighbors(tag_rssi) # nearest neighbors
 
     neighbor_positions = y[position[0]]
 
-    print(f"\nDistances to 3 nearest neighbors:", np.round(distances[0], 2))
+
+    print(f"\nDistances to nearest neighbors:", np.round(distances[0], 2))
+
     print(f"\nNeighbor positions:", neighbor_positions)
 
     weights = 1 / (distances[0] + 1e-5)  
     refined_location = np.average(neighbor_positions, axis=0, weights=weights)
 
+
     return refined_location
 
-def plot_all(material_positions, selected_tag_pos, coarse_zone): # plotting all values in graph
+def plot_all(material_positions, selected_tag_pos, coarse_zone,refined_location=None): # plotting all values in graph
     plt.figure(figsize=(10, 10))
     
     
@@ -108,12 +117,16 @@ def plot_all(material_positions, selected_tag_pos, coarse_zone): # plotting all 
     plt.scatter(user_pos[0], user_pos[1], c='orange', marker='*', s=200)
 
     plt.scatter(selected_tag_pos[0], selected_tag_pos[1], c='red', marker='x', s=150)
+
+    if refined_location is not None:
+        print(f"Plotting Refined Location: {refined_location}")
+        plt.scatter(refined_location[0], refined_location[1], c='olive', marker='X', s=200)
     
     plt.grid(True)
     plt.xlim(-10, 110)
     plt.ylim(-10, 110)
-    
-    plt.show()
+
+    plt.show(block=False)
 
 def simulation():
     print(f"\nAvailable Material IDs :")
@@ -143,6 +156,10 @@ def simulation():
             refined_zone = None
             print("Skipping Cloud computation.")
 
+
+        plot_all(material_locations, tag_pos, coarse_zone,refined_zone)
+
+
         m_input = input("\nHas the material picked up? (yes/no): ").strip().lower()
         if m_input == 'yes':
             del material_locations[material_id]   
@@ -151,12 +168,9 @@ def simulation():
         else:
             print(f"Material is not picked up. It's still in list.")
 
-        plot_all(material_locations, tag_pos, coarse_zone)
-
 
     else:
         print(f"Material ID '{material_id}' not found!")
 
 
-
-simulation()
+simulation() 
