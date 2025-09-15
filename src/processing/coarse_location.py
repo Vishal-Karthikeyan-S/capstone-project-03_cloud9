@@ -119,7 +119,6 @@ def plot_all(material_positions, selected_tag_pos, coarse_zone,refined_location=
     plt.scatter(selected_tag_pos[0], selected_tag_pos[1], c='red', marker='x', s=150)
 
     if refined_location is not None:
-        print(f"Plotting Refined Location: {refined_location}")
         plt.scatter(refined_location[0], refined_location[1], c='olive', marker='X', s=200)
     
     plt.grid(True)
