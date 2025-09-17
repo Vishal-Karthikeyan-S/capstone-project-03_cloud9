@@ -2,7 +2,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 import random
 
-
 edge_gateways = {
     'Zone A': [0, 0],
     'Zone B': [100, 0],
@@ -69,7 +68,6 @@ from sklearn.neighbors import NearestNeighbors
 X = np.array([entry["rssi"] for entry in dataset_])
 y = np.array([entry["pos"] for entry in dataset_])
 
-
 knn = NearestNeighbors(n_neighbors=7, metric='euclidean')
 knn.fit(X,y)
 
@@ -77,26 +75,22 @@ knn.fit(X,y)
 def cloud_computation(tag_position): 
     print("Computing the exact location....waiting for cloud response...")
     
-
     tag_rssi = list(get_rssi(tag_position, add_noise=False).values()) # curr rssi values
-
     tag_rssi = np.array(tag_rssi).reshape(1, -1)
 
     distances, position = knn.kneighbors(tag_rssi) # nearest neighbors
 
     neighbor_positions = y[position[0]]
 
-
     print(f"\nDistances to nearest neighbors:", np.round(distances[0], 2))
-
     print(f"\nNeighbor positions:", neighbor_positions)
 
     weights = 1 / (distances[0] + 1e-5)  
     refined_location = np.average(neighbor_positions, axis=0, weights=weights)
 
-
     return refined_location
 
+  
 def plot_all(material_positions, selected_tag_pos, coarse_zone,refined_location=None): # plotting all values in graph
     plt.figure(figsize=(10, 10))
     
@@ -145,7 +139,7 @@ def simulation():
 
         print(f"\nMax RSSI: {max_rssi:.2f} dBm\n")
         print(f"Coarse Location Zone: {coarse_zone}")
-
+        
         # for cloud
         c_input = input("\nDo you want to compute the exact location via Cloud? (yes/no): ").strip().lower()
         if c_input == 'yes':
@@ -154,7 +148,6 @@ def simulation():
         else:
             refined_zone = None
             print("Skipping Cloud computation.")
-
 
         plot_all(material_locations, tag_pos, coarse_zone,refined_zone)
 
@@ -167,9 +160,10 @@ def simulation():
         else:
             print(f"Material is not picked up. It's still in list.")
 
-
     else:
         print(f"Material ID '{material_id}' not found!")
 
 
+
 simulation() 
+

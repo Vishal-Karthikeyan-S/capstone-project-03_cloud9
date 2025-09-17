@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Resource Map</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <style>
+        .map-container {
+            margin-top: 10px;   /* reduce gap */
+        }
+        img {
+            margin: 10px 0;     /* reduce space above and below */
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            padding: 5px;
+            background: white;
+            max-width: 100%;    /* responsive */
+            height: auto;
+        }
+        p {
+            margin: 5px 0 10px 0;  /* tighten spacing */
+        }
+        .btn {
+            margin-top: 15px;   /* small gap after image */
+            display: inline-block;
+            width: 120px;       /* same width for buttons */
+        }
+    </style>
+</head>
+<body>
+<div class="box">
+    <h2 style="margin-bottom:10px;">Resource Map</h2>
+    <p>Red squares = Gateways, Blue dots = Materials</p>
+
+    <div class="map-container">
+        <img src="{{ url_for('plot_png') }}" alt="Factory Map">
+    </div>
+
+    <a href="{{ url_for('search') }}" class="btn">Back to Search</a>
+</div>
+</body>
+</html>

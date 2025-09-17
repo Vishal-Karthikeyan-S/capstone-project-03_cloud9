@@ -1,0 +1,32 @@
+# Mac system files
+.DS_Store
+*.DS_Store
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environments
+venv/
+env/
+*.env
+.venv/
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# Data files you don't want in Git
+rssi_timeseries.csv
+
+# VS Code settings
+.vscode/
+
+# Logs
+*.log
+
+# Any other temporary files
+*.tmp
+*.swp
+
