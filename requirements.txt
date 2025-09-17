@@ -1,3 +1,8 @@
 numpy
 matplotlib
 scikit-learn
+scipy
+filterpy
+pandas
+simpy
+flask
