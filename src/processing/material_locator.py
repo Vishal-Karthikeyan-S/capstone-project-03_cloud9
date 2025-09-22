@@ -16,8 +16,8 @@ edge_gateways = {
 } # fixed edge gateway locations
 
 # door and user position
-door_position = np.array([0, 50])
-user_pos = np.array([5, 50])
+door_position = np.array([-2, 50])
+user_pos = np.array([0, 50])
 
 res_x = (0, 20) # restricted near door(to place materials)
 res_y = (40, 60)
@@ -100,17 +100,23 @@ def get_coarse_location(tag_position):
 
 def fingerprint_dataset(step):
     dataset = []
-
     for x in range(0, 101, step):
         for y in range(0, 101, step):
             pos = np.array([x, y])
             rssi_vector = list(get_rssi(pos).values())
             dataset.append({"pos": (x, y), "rssi": rssi_vector})
-
     return dataset
 
-dataset_ = fingerprint_dataset(step=1)
-
+if os.path.exists("fingerprint.json"):
+    with open("fingerprint.json", "r") as f:
+        dataset_ = json.load(f)
+    print(f"\nLoading existing fingerprint dataset...")
+    
+else:
+    dataset_ = fingerprint_dataset(step=1)
+    with open("fingerprint.json", "w") as f:
+        json.dump(dataset_, f)
+    print(f"\nGenerated new fingerprint dataset....")
 
 from sklearn.neighbors import NearestNeighbors
 
@@ -141,9 +147,9 @@ def cloud_computation(tag_position):
 
 def find_path(start, end):   
     
-    start_grid = (round(start[0]/10)*10, round(start[1]/10)*10) # user pos(nearest to grid point)
+    start_grid = (round(start[0]//10)*10, round(start[1]//10)*10) # user pos(nearest to grid point)
     end_exact = (end[0], end[1]) # material place
-    end_grid = (round(end[0]/10)*10, round(end[1]/10)*10)  # nearest grid point to the material 
+    end_grid = (round(end[0]//10)*10, round(end[1]//10)*10)  # nearest grid point to the material 
     
     def heuristic(a, b):
         return abs(a[0] - b[0]) + abs(a[1] - b[1]) # manhattan
@@ -231,13 +237,6 @@ def plot_all(material_positions, selected_tag_pos, coarse_zone, refined_location
             path_y = [p[1] for p in path]
             plt.plot(path_x, path_y, 'lightcoral', linewidth=4, alpha=0.9,)
             
-            for i, (px, py) in enumerate(path):
-                if i == 0:
-                    plt.scatter(px, py, c='red', marker='o', s=80, alpha=0.7, edgecolor='plum')
-                elif i == len(path)-1:
-                    plt.scatter(px, py, c='red', marker='s', s=80, alpha=0.7, edgecolor='plum')
-                else:
-                    plt.scatter(px, py, c='red', marker='o', s=60, alpha=0.6, edgecolor='plum')
             
     plt.grid(True, alpha=0.3)
     plt.xlim(-5, 105)
