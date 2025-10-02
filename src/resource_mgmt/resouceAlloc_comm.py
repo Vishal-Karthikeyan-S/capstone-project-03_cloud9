@@ -1,107 +1,24 @@
-import math, random, uuid, statistics, time
+import math, random, uuid, time
 import simpy
 from collections import defaultdict
 import numpy as np
 import matplotlib.pyplot as plt
 
-edge_gateways = {
-    'Zone A': [0, 0],
-    'Zone B': [100, 0],
-    'Zone C': [0, 100],
-    'Zone D': [100, 100],
-    'Zone E': [50, 50]
-} 
+from material_locator import (
+    edge_gateways, door_position, user_pos,
+    is_on_grid_line, valid_pos, simulation,
+    get_rssi, get_coarse_location, cloud_computation,
+    fingerprint_dataset, mat_loc
+)
 
-door_position = np.array([0, 50])
-user_pos = np.array([5, 50])
+def ms_to_sec(v): 
+    return max(0.0, v) / 1000.0
 
-material_locations = {
-    f"MAT{str(i+1).zfill(3)}": [random.randint(0, 100), random.randint(0, 100)]
-    for i in range(50)
-}
+def service_time(size_bytes, throughput): 
+    return size_bytes / throughput
 
-
-def get_rssi(tag_position):
-    rssi_values = {}
-    for zone, gw_pos in edge_gateways.items():
-        distance = np.linalg.norm(tag_position - np.array(gw_pos))
-        rssi = -59 - 10 * 2 * np.log10(distance + 1e-5) + np.random.normal(0, 3)
-        rssi_values[zone] = rssi
-    return rssi_values
-
-
-def get_coarse_location(tag_position):
-    rssi_data = get_rssi(tag_position)
-    max_rssi = max(rssi_data.values())
-    tied_zones = [zone for zone, rssi in rssi_data.items()
-                  if abs(rssi - max_rssi) <= 1.0]
-    if len(tied_zones) == 1:
-        coarse_location = tied_zones[0]
-    else:
-        distances = [np.linalg.norm(user_pos - np.array(edge_gateways[zone]))
-                     for zone in tied_zones]
-        nearest_idx = np.argmin(distances)
-        coarse_location = tied_zones[nearest_idx]
-    return coarse_location, max_rssi, rssi_data
-
-
-def plot_all(material_positions, selected_tag_pos, coarse_zone):
-    plt.figure(figsize=(10, 10))
-
-    for mat_id, pos in material_positions.items():
-        plt.scatter(pos[0], pos[1], c='gray', marker='o', s=50, alpha=0.6)
-        plt.text(pos[0] + 0.5, pos[1] + 0.5, mat_id, fontsize=6)
-
-    for zone, pos in edge_gateways.items():
-        plt.scatter(pos[0], pos[1], marker='s', s=200,
-                    color='green' if zone == coarse_zone else 'blue')
-        plt.text(pos[0] + 1, pos[1] + 1, zone, fontsize=9)
-
-    plt.scatter(door_position[0], door_position[1], c='purple', marker='D', s=150)
-    plt.text(door_position[0] + 1, door_position[1] + 1, 'Door', fontsize=10, color='purple')
-
-    plt.scatter(user_pos[0], user_pos[1], c='orange', marker='*', s=200)
-    plt.scatter(selected_tag_pos[0], selected_tag_pos[1], c='red', marker='x', s=150)
-
-    plt.grid(True)
-    plt.xlim(-10, 110)
-    plt.ylim(-10, 110)
-    plt.show()
-
-
-def simulation():
-    print("Available Material IDs:")
-    print(", ".join(list(material_locations.keys())))
-
-    material_id = input("\nEnter Material ID (e.g., MAT001): ").strip().upper()
-
-    if material_id in material_locations:
-        tag_pos = np.array(material_locations[material_id])
-        coarse_zone, max_rssi, rssi_details = get_coarse_location(tag_pos)
-        print(f"\nMaterial ID: {material_id}")
-        print(f"Material Position: {tag_pos.tolist()}")
-        print(f"RSSI values: {rssi_details}")
-        print(f"Coarse Location Zone: {coarse_zone} (Max RSSI: {max_rssi:.2f} dBm)")
-        plot_all(material_locations, tag_pos, coarse_zone)
-    else:
-        print(f"Material ID '{material_id}' not found!")
-
-
-# simulation() 
-
-random_seed = 123
-simulation_time = 60.0
-arr_rate = 30
-edge_nodes = [
-    {"id": "edge-1", "cpu": 2, "mem": 256, "throughput": 2e6, "uplink_ms": 20, "downlink_ms": 20, "gw_id": "gw1"},
-    {"id": "edge-2", "cpu": 2, "mem": 256, "throughput": 2e6, "uplink_ms": 25, "downlink_ms": 25, "gw_id": "gw2"},
-]
-cloud_nodes = {"id": "cloud", "cpu": 16, "mem": 16384, "throughput": 50e6, "uplink_ms": 120, "downlink_ms": 100}
-
-
-def ms_to_sec(v): return max(0.0, v) / 1000.0
-def service_time(size_bytes, throughput): return size_bytes / throughput
-
+def euclidean(a, b):
+    return np.linalg.norm(np.array(a) - np.array(b))
 
 class MockBus:
     def __init__(self, env):
@@ -123,26 +40,6 @@ class MockBus:
     def _delayed_call(self, delay, fn):
         yield self.env.timeout(delay)
         fn()
-
-
-def euclidean(a, b):
-    return math.sqrt(sum((x - y) ** 2 for x, y in zip(a, b)))
-
-def knn_predict(train_X, train_y, query, k=3):
-    dists = [(euclidean(x, query), y) for x, y in zip(train_X, train_y)]
-    dists.sort(key=lambda t: t[0])
-    neighbors = dists[:k]
-    eps = 1e-6
-    numx = 0.0
-    numy = 0.0
-    denom = 0.0
-    for dist, pos in neighbors:
-        w = 1.0 / (dist + eps)
-        numx += pos[0] * w
-        numy += pos[1] * w
-        denom += w
-    return (numx / denom, numy / denom)
-
 
 class Node:
     def __init__(self, env, spec, bus, fingerprint_db=None):
@@ -168,10 +65,12 @@ class Node:
         size = task["size_bytes"]
         mem_need = min(64, max(1, size // 1024))
         self.queue_len += 1
+
         with self.cpu.request() as req:
             yield req
             yield self.mem.get(mem_need)
             start = self.env.now
+
             if self.spec.get("gw_id") is not None:
                 rmap = task.get("rssi_map", {})
                 if rmap:
@@ -179,20 +78,20 @@ class Node:
                     coarse = {"task_id": task["task_id"], "node": self.id,
                               "coarse_loc": best_gw, "ts": self.env.now}
                     self.bus.publish("location/coarse", coarse, delay=0.0)
+
             work = service_time(size, self.throughput)
             yield self.env.timeout(work)
+
             if self.id == "cloud" and self.fingerprint_db is not None:
-                gw_order = list(edge_gateways.keys())
-                query = [task["rssi_map"].get(gid, -120.0) for gid in gw_order]
-                X = [f["rssi_vector"] for f in self.fingerprint_db]
-                Y = [f["pos"] for f in self.fingerprint_db]
-                refined_pos = knn_predict(X, Y, query, k=3)
+                refined_pos = cloud_computation(np.array(task["true_pos"]))
                 refined = {"task_id": task["task_id"], "node": self.id,
                            "refined_pos": refined_pos, "true_pos": task["true_pos"], "ts": self.env.now}
                 self.bus.publish("location/refined", refined, delay=ms_to_sec(self.downlink))
+
             self.mem.put(mem_need)
             self.completed += 1
             self.busy_time += (self.env.now - start)
+
         self.queue_len -= 1
         self.bus.publish(result_topic,
                          {"task_id": task["task_id"], "node": self.id, "finish": self.env.now},
@@ -214,9 +113,9 @@ class Scheduler:
         self.latencies = []
         self.route_counts = {"edge": 0, "cloud": 0}
         self.loc_errors = []
-        self.start_times = {} 
+        self.start_times = {}
 
-        bus.subscribe("edge/coarse", self.on_task)
+        bus.subscribe("task/new", self.on_task)
         bus.subscribe("node/result", self.on_result)
         bus.subscribe("location/refined", self.on_refined)
 
@@ -251,9 +150,12 @@ class Scheduler:
     def on_refined(self, env, topic, msg):
         true = msg.get("true_pos")
         pred = msg.get("refined_pos")
-        if true and pred:
-            err = euclidean(true, pred)
+        if true is not None and pred is not None:
+            true_arr = np.array(true)
+            pred_arr = np.array(pred)
+            err = euclidean(true_arr, pred_arr)
             self.loc_errors.append(err)
+
 
     def decide(self, task):
         size = task["size_bytes"]
@@ -269,7 +171,7 @@ class Scheduler:
             else:
                 self.route_counts["edge"] += 1
             return best.id, ms_to_sec(best.uplink)
-        
+
         edges = [self.nodes[eid] for eid in self.edge_ids]
         best_edge = min(edges,
                         key=lambda n: n.estimate_finish_time(size) + ms_to_sec(n.uplink) + ms_to_sec(n.downlink))
@@ -283,19 +185,9 @@ class Scheduler:
             self.route_counts["edge"] += 1
         return choice.id, ms_to_sec(choice.uplink)
 
-
-def path_loss_rssi(tx_pos, rx_pos, tx_power_dbm=0.0, path_loss_exponent=2.0, sigma=2.0):
-    dx = tx_pos[0] - rx_pos[0]
-    dy = tx_pos[1] - rx_pos[1]
-    d = math.sqrt(dx * dx + dy * dy)
-    d = max(d, 0.1)
-    rssi = tx_power_dbm - 10 * path_loss_exponent * math.log10(d) + random.gauss(0, sigma)
-    return rssi
-
-
 def material_task_source(env, bus, material_id, rate_per_min=10):
     inter = 60.0 / rate_per_min
-    tag_pos = np.array(material_locations[material_id])
+    tag_pos = np.array(mat_loc[material_id])
     while True:
         yield env.timeout(random.expovariate(1.0 / inter))
         rssi_map = get_rssi(tag_pos)
@@ -309,25 +201,23 @@ def material_task_source(env, bus, material_id, rate_per_min=10):
             "source_gw": coarse_zone,
             "created_real_ts": env.now
         }
-        bus.publish("edge/coarse", task)
+        bus.publish("task/new", task)
 
-
-def build_fingerprint_db(num_points=200):
-    db = []
-    gw_positions = list(edge_gateways.values())
-    for _ in range(num_points):
-        pos = (random.uniform(0, 100), random.uniform(0, 100))
-        rvec = [path_loss_rssi(pos, gw_pos) for gw_pos in gw_positions]
-        db.append({"pos": pos, "rssi_vector": rvec})
-    return db
-
+random_seed = 123
+simulation_time = 60.0
+arr_rate = 30
+edge_nodes = [
+    {"id": "edge-1", "cpu": 2, "mem": 256, "throughput": 2e6, "uplink_ms": 20, "downlink_ms": 20, "gw_id": "gw1"},
+    {"id": "edge-2", "cpu": 2, "mem": 256, "throughput": 2e6, "uplink_ms": 25, "downlink_ms": 25, "gw_id": "gw2"},
+]
+cloud_nodes = {"id": "cloud", "cpu": 16, "mem": 16384, "throughput": 50e6, "uplink_ms": 120, "downlink_ms": 100}
 
 def run_demo_for_policy(policy):
     random.seed(random_seed)
     env = simpy.Environment()
     bus = MockBus(env)
     sched = Scheduler(env, bus, edge_nodes, cloud_nodes, policy=policy)
-    fp_db = build_fingerprint_db(300)
+    fp_db = fingerprint_dataset(300)
     sched.set_cloud_db(fp_db)
 
     material_id = "MAT017"
@@ -355,7 +245,6 @@ def run_demo_for_policy(policy):
         "avg_loc_err": avg_loc_err
     }
 
-
 def run_all_policies():
     all_results = []
     for policy in ['FCFS', 'LB', 'LatencyAware']:
@@ -375,4 +264,5 @@ def run_all_policies():
     plt.legend()
     plt.grid(True)
     plt.show()
-run_all_policies()
+
+
