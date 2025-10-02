@@ -69,3 +69,10 @@ Refined location: [66.88, 62.06]
 
 ![Graph_4](./images_analysis/1.png)
 
+---  
+  
+    
+## *Path Finding*
+In the pathfinding analysis, A* explores much fewer nodes than Dijkstra but still finds the same shortest path. This makes A* faster and more efficient because it uses a heuristic to focus on the best paths. Dijkstra checks many unnecessary nodes, so it takes more work even if the time difference is small. For indoor navigation from the user to materials, A* is the better choice.
+
+

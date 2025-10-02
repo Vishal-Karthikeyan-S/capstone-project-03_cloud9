@@ -9,6 +9,9 @@ from sklearn.neighbors import KNeighborsRegressor
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.neural_network import MLPRegressor
 
+from heapq import heappush, heappop
+import time
+
 edge_gateways = {
 'Zone A': [20, 20],
 'Zone B': [60, 20],
@@ -184,7 +187,7 @@ def cloud_computation(tag_position):
 
 
 
-def find_path(start, end):   
+def find_path_a_star(start, end):   
     
     start_grid = (round(start[0]//10)*10, round(start[1]//10)*10) # user pos(nearest to grid point)
     end_exact = (end[0], end[1]) # material place
@@ -203,15 +206,17 @@ def find_path(start, end):
         return neighbors
     
     # A* algorithm
-    from heapq import heappush, heappop
+    start_time = time.time()
     
     open_set = [(0, start_grid)] # keeps track of which nodes to explore next
     came_from = {} # for shortest path
     g_score = {start_grid: 0} # actual cost from start to each node
     f_score = {start_grid: heuristic(start_grid, end_grid)} # tracks estimated total cost
+    nodes_explored = 0
     
     while open_set:
         current = heappop(open_set)[1]
+        nodes_explored += 1
         
         if current == end_grid: # curr path == mat_pos, we will will reverse it and find path
             path = []
@@ -225,7 +230,9 @@ def find_path(start, end):
             if path[-1] != end_exact:
                 path.append(end_exact)
             
-            return path
+            elapsed = (time.time() - start_time)*1000
+            path_length = sum(np.linalg.norm(np.array(path[i])-np.array(path[i-1])) for i in range(1,len(path)))
+            return path, nodes_explored, elapsed, path_length
         
         for neighbor in get_neighbors(current):
             tot_g_score = g_score[current] + 10  
@@ -236,10 +243,87 @@ def find_path(start, end):
                 f_score[neighbor] = g_score[neighbor] + heuristic(neighbor, end_grid)
                 heappush(open_set, (f_score[neighbor], neighbor))
     
-    return [start_grid, end_exact]
+    elapsed = (time.time() - start_time)*1000
+    return [start_grid,end_exact], nodes_explored, elapsed, 0
 
 
-def plot_all(material_positions, selected_tag_pos, coarse_zone, refined_location=None, show_path=False):
+def find_path_dijkstra(start, end): # Diijkstra's algorihthm
+    start_grid = (round(start[0]//10)*10, round(start[1]//10)*10)
+    end_exact = (end[0], end[1])
+    end_grid = (round(end[0]//10)*10, round(end[1]//10)*10)
+
+    def get_neighbors(pos):
+        neighbors = []
+        for dx, dy in [(0,10),(10,0),(0,-10),(-10,0)]:
+            new_x, new_y = pos[0]+dx, pos[1]+dy
+            if 0<=new_x<=100 and 0<=new_y<=100:
+                neighbors.append((new_x,new_y))
+        return neighbors
+
+    start_time = time.time()
+    open_set = [(0, start_grid)]
+    came_from = {}
+    g_score = {start_grid:0}
+    nodes_explored = 0
+
+    while open_set:
+        current = heappop(open_set)[1]
+        nodes_explored += 1
+        if current == end_grid:
+            path=[]
+            while current in came_from:
+                path.append(current)
+                current = came_from[current]
+            path.append(start_grid)
+            path = path[::-1]
+            if path[-1]!=end_exact:
+                path.append(end_exact)
+            elapsed = (time.time()-start_time)*1000
+            path_length = sum(np.linalg.norm(np.array(path[i])-np.array(path[i-1])) for i in range(1,len(path)))
+            return path, nodes_explored, elapsed, path_length
+        
+        for neighbor in get_neighbors(current):
+            tot_g_score = g_score[current]+10
+            if neighbor not in g_score or tot_g_score<g_score[neighbor]:
+                came_from[neighbor]=current
+                g_score[neighbor]=tot_g_score
+                heappush(open_set,(g_score[neighbor],neighbor))
+
+    elapsed = (time.time()-start_time)*1000
+    return [start_grid,end_exact], nodes_explored, elapsed, 0
+
+
+
+def path_analysis(user_pos, material_pos, material_id):
+   # calling both algo
+    path_a, nodes_a, time_a, length_a = find_path_a_star(user_pos, material_pos)
+    path_d, nodes_d, time_d, length_d = find_path_dijkstra(user_pos, material_pos)
+
+    
+    print(f"\nA* Path     --> Nodes Explored: {nodes_a}, Path Length: {length_a:.2f}, Time: {time_a:.2f}ms")
+    print(f"Dijkstra Path --> Nodes Explored: {nodes_d}, Path Length: {length_d:.2f}, Time: {time_d:.2f}ms")
+
+    
+    metrics = ['Nodes Explored', 'Path Length', 'Execution Time (ms)']
+    astar_values = [nodes_a, length_a, time_a]
+    dijk_values = [nodes_d, length_d, time_d]
+
+    x = np.arange(len(metrics))
+    width = 0.35
+    plt.figure(figsize=(8,5))
+    plt.bar(x - width/2, astar_values, width, label='A*', color='lightcoral')
+    plt.bar(x + width/2, dijk_values, width, label='Dijkstra', color='skyblue')
+    plt.xticks(x, metrics)
+    plt.ylabel("values")
+    plt.title(f"Pathfinding Analysis to Material {material_id}")
+    plt.legend()
+    plt.show(block=False)
+
+    return path_a, path_d
+
+
+
+def plot_all(material_positions, selected_tag_pos, coarse_zone, refined_location=None, show_path=False, path_a=None):
 
     plt.figure(figsize=(12, 10))
     
@@ -273,18 +357,11 @@ def plot_all(material_positions, selected_tag_pos, coarse_zone, refined_location
         colors = {"KNN": "olive", "Random Forest": "cyan", "MLP (NN)": "magenta"}
         markers = {"KNN": "X", "Random Forest": "P", "MLP (NN)": "D"}
         for model_name, pos in refined_location.items():
-            plt.scatter(pos[0], pos[1], c=colors[model_name], marker=markers[model_name],
-                s=150, label=f"{model_name} Prediction")
+            plt.scatter(pos[0], pos[1], c=colors[model_name], marker=markers[model_name],s=150, label=f"{model_name} Prediction")
     
-    # path from user to best model
-    if show_path and refined_location is not None:
         
-        best_model = min(refined_location, key=lambda m: np.linalg.norm(refined_location[m]-selected_tag_pos))
-        best_pos = refined_location[best_model]
-        path = find_path(user_pos, best_pos)
-        path_x = [p[0] for p in path]
-        path_y = [p[1] for p in path]
-        plt.plot(path_x, path_y, 'lightcoral', linewidth=4, alpha=0.9, label=f"Path to {best_model}")
+    if show_path and path_a is not None:
+        plt.plot([p[0] for p in path_a], [p[1] for p in path_a],'lightcoral', linewidth=3, label='A* Path')
 
     plt.legend()      
     plt.grid(True, alpha=0.3)
@@ -323,8 +400,9 @@ def simulation():
             refined_zone = None
             show_path = False
             print("Skipping Cloud computation.")
-        
-        plot_all(mat_loc, tag_pos, coarse_zone, refined_zone, show_path)
+
+        path_a, _ = path_analysis(user_pos, tag_pos, material_id)
+        plot_all(mat_loc, tag_pos, coarse_zone, refined_zone, show_path=show_path,path_a=path_a)
         
         m_input = input("\nHas the material picked up? (yes/no): ").strip().lower()
         if m_input == 'yes':
