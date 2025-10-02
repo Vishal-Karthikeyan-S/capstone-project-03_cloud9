@@ -1,5 +1,5 @@
 # **Analysis**
----
+
 
 
 ## *Coarse Location (edge)*
@@ -16,7 +16,7 @@ Estimated Positions for a material:
 
  Errors: {'Max-RSSI': 14.422205101855956, 'Centroid': 14.422205101855956, 'Weighted Centroid': 20.138805066858755}
  
----
+
 
  ## *Exact Location (cloud)*
  
@@ -25,7 +25,7 @@ Estimated Positions for a material:
 - Even when Random Forest or MLP is the “best model” the differences are very small, often just a few centimeters.
 - KNN does not require traditional training. It uses stored data points and computes location based on nearest neighbors. This makes it simple for BLE-based indoor positioning.
 
----
+
 
 #### **Sample 1**
 KNN → [35.0, 92.0], Error: 0.00 m
