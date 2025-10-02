@@ -3,6 +3,12 @@ import matplotlib.pyplot as plt
 import random
 import json,os
 
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+from sklearn.neighbors import KNeighborsRegressor
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.neural_network import MLPRegressor
+
 edge_gateways = {
 'Zone A': [20, 20],
 'Zone B': [60, 20],
@@ -118,31 +124,64 @@ else:
         json.dump(dataset_, f)
     print(f"\nGenerated new fingerprint dataset....")
 
-from sklearn.neighbors import NearestNeighbors
 
-X = np.array([entry["rssi"] for entry in dataset_])
-y = np.array([entry["pos"] for entry in dataset_])
 
-knn = NearestNeighbors(n_neighbors=7, metric='euclidean')
-knn.fit(X,y)
+# models for analysis : knn, RandomForestReg. , mlp
+X = np.array([entry["rssi"] for entry in dataset_], dtype=float)
+y = np.array([entry["pos"] for entry in dataset_], dtype=float)
+
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+scaler = StandardScaler().fit(X_train)
+X_train_s = scaler.transform(X_train)
+X_test_s = scaler.transform(X_test)
+
+knn_model = KNeighborsRegressor(n_neighbors=7, weights='distance')
+rf_model = RandomForestRegressor(n_estimators=100, random_state=42)
+mlp_model = MLPRegressor(hidden_layer_sizes=(128, 64), max_iter=300, random_state=42, early_stopping=True)
+
+knn_model.fit(X_train_s, y_train)
+rf_model.fit(X_train_s, y_train)
+mlp_model.fit(X_train_s, y_train)
+
 
 
 def cloud_computation(tag_position):
     print("Computing the exact location....waiting for cloud response...")
 
-    tag_rssi = list(get_rssi(tag_position, add_noise=False).values()) # curr rssi values
+    tag_rssi = list(get_rssi(tag_position, add_noise=False).values())
     tag_rssi = np.array(tag_rssi).reshape(1, -1)
+    tag_rssi_scaled = scaler.transform(tag_rssi)
 
-    distances, position = knn.kneighbors(tag_rssi) # nearest neighbors
-    neighbor_positions = y[position[0]]
+    models = {
+        "KNN": knn_model,
+        "Random Forest": rf_model,
+        "MLP (NN)": mlp_model
+    }
 
-    print(f"\nDistances to nearest neighbors:", np.round(distances[0], 2))
-    print(f"\nNeighbor positions:", neighbor_positions)
+    results = {}
+    for name, model in models.items():
+        pred = model.predict(tag_rssi_scaled)[0]
+        error = np.linalg.norm(pred - tag_position)
+        results[name] = {"pred": pred, "error": error}
+        print(f"\n{name} → Predicted: {np.round(pred,2)}, Error: {error:.2f} meters")
 
-    weights = 1 / (distances[0] + 1e-5)
-    refined_location = np.average(neighbor_positions, axis=0, weights=weights)
+    best_model = min(results, key=lambda k: results[k]["error"])
+    print(f"\n ==>> Best Model: {best_model} with error {results[best_model]['error']:.2f} meters")
 
-    return refined_location
+    # bar chart for errors by ecul. dist.
+    plt.figure(figsize=(6,4))
+    model_names = list(results.keys())
+    errors = [results[m]["error"] for m in model_names]
+    plt.bar(model_names, errors, color=['blue','green','orange'])
+    plt.ylabel("Localization Error (m)")
+    plt.title("Model Comparison for This Material")
+    plt.show(block=False)
+
+    
+    best_pred = results[best_model]["pred"]
+    return {best_model: best_pred} 
+
 
 
 def find_path(start, end):   
@@ -228,20 +267,31 @@ def plot_all(material_positions, selected_tag_pos, coarse_zone, refined_location
     plt.scatter(selected_tag_pos[0], selected_tag_pos[1], c='red', marker='x', s=150)
     
     if refined_location is not None:
-        plt.scatter(refined_location[0], refined_location[1], c='olive', marker='X', s=200)
+        best_model = min(refined_location, key=lambda m: np.linalg.norm(refined_location[m] - selected_tag_pos))
+        best_pos = refined_location[best_model]
+
+        colors = {"KNN": "olive", "Random Forest": "cyan", "MLP (NN)": "magenta"}
+        markers = {"KNN": "X", "Random Forest": "P", "MLP (NN)": "D"}
+        for model_name, pos in refined_location.items():
+            plt.scatter(pos[0], pos[1], c=colors[model_name], marker=markers[model_name],
+                s=150, label=f"{model_name} Prediction")
+    
+    # path from user to best model
+    if show_path and refined_location is not None:
         
-       # for path
-        if show_path:
-            path = find_path(user_pos, refined_location)
-            path_x = [p[0] for p in path]
-            path_y = [p[1] for p in path]
-            plt.plot(path_x, path_y, 'lightcoral', linewidth=4, alpha=0.9,)
-            
-            
+        best_model = min(refined_location, key=lambda m: np.linalg.norm(refined_location[m]-selected_tag_pos))
+        best_pos = refined_location[best_model]
+        path = find_path(user_pos, best_pos)
+        path_x = [p[0] for p in path]
+        path_y = [p[1] for p in path]
+        plt.plot(path_x, path_y, 'lightcoral', linewidth=4, alpha=0.9, label=f"Path to {best_model}")
+
+    plt.legend()      
     plt.grid(True, alpha=0.3)
     plt.xlim(-5, 105)
     plt.ylim(-5, 105)
     plt.show(block=False)
+
 
 def simulation():
     print(f"\nAvailable Material IDs :")
