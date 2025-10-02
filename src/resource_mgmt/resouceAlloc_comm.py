@@ -265,4 +265,6 @@ def run_all_policies():
     plt.grid(True)
     plt.show()
 
-
+def run_code():
+    run_all_policies
+    
