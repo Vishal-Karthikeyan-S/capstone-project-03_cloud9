@@ -76,3 +76,23 @@ Refined location: [66.88, 62.06]
 In the pathfinding analysis, A* explores much fewer nodes than Dijkstra but still finds the same shortest path. This makes A* faster and more efficient because it uses a heuristic to focus on the best paths. Dijkstra checks many unnecessary nodes, so it takes more work even if the time difference is small. For indoor navigation from the user to materials, A* is the better choice.
 
 
+#### **Sample 1**
+A* Path       --> Nodes Explored: 7, Path Length: 64.47, Time: 0.17ms
+Dijkstra Path --> Nodes Explored: 37, Path Length: 64.47, Time: 0.18ms
+
+#### **Sample 2**
+A* Path       -> Nodes Explored: 5, Path Length: 45.00, Time: 0.17ms
+Dijkstra Path -> Nodes Explored: 17, Path Length: 45.00, Time: 0.13ms
+
+#### **Sample 3**
+A* Path       -> Nodes Explored: 20, Path Length: 75.39, Time: 0.21ms
+Dijkstra Path -> Nodes Explored: 51, Path Length: 75.39, Time: 0.20ms
+  
+---
+  
+
+
+![Graph_5](./images_analysis/5.png)
+
+
+
