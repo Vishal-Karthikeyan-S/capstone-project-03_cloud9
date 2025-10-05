@@ -12,86 +12,71 @@ from sklearn.neural_network import MLPRegressor
 from heapq import heappush, heappop
 import time
 
-edge_gateways = {
-'Zone A': [20, 20],
-'Zone B': [60, 20],
-'Zone C': [100, 20],
-'Zone D': [100, 60],
-'Zone E': [100, 100],
-'Zone F': [60, 100],
-'Zone H': [20, 100],
-'Zone I': [20, 60],
-'ZONE J': [60,60]
-} # fixed edge gateway locations
+import pandas as pd
+
+aploc = pd.read_csv('dataset/aploc.csv', header=None, names=['X', 'Y'])
+
+edge_gateways = {}
+
+for idx, row in aploc.iterrows():
+    edge_gateways[f'AP{idx}'] = [row['X'], row['Y']]
+
+
+# load mate pos and rssi data 
+nodeloc = pd.read_csv('dataset/nodeloc_ss.csv', sep=',')
+nodeloc.columns = nodeloc.columns.str.strip()
+
+ap_columns = [col for col in nodeloc.columns if col.startswith('AP')]
+print(f"\naccess points: {ap_columns}")
+
+grouped = nodeloc.groupby(['X', 'Y']).agg({ap: 'mean' for ap in ap_columns}).reset_index()
+
+mat_loc = {}
+mat_rssi_data = {}  
+
+for idx, row in grouped.iterrows():
+    mat_id = f"MAT{str(idx+1).zfill(3)}"
+    mat_loc[mat_id] = [float(row['X']), float(row['Y'])]
+    
+    mat_rssi_data[mat_id] = {ap: row[ap] for ap in ap_columns}
+
+print(f"Loaded {len(mat_loc)} material positions from dataset")
+
+nodeloc_data = grouped
+
 
 # door and user position
-door_position = np.array([-2, 50])
-user_pos = np.array([0, 50])
+all_mat_x = [pos[0] for pos in mat_loc.values()]
+all_mat_y = [pos[1] for pos in mat_loc.values()]
 
-res_x = (0, 20) # restricted near door(to place materials)
-res_y = (40, 60)
+min_x, max_x = min(all_mat_x), max(all_mat_x)
+min_y, max_y = min(all_mat_y), max(all_mat_y)
 
-# materials can't be placed on grid lines
-def is_on_grid_line(x, y, grid_spacing=10):
-    return x % grid_spacing == 0 or y % grid_spacing == 0
+door_position = np.array([min_x - 1, (min_y + max_y) / 2])
 
-def valid_pos(x, y):
+user_pos = np.array([min_x - 0.5, (min_y + max_y) / 2])
 
-    if res_x[0] <= x <= res_x[1] and res_y[0] <= y <= res_y[1]:
-        return False
+print(f"\nDoor position: {door_position}")
+print(f"User position: {user_pos}")
+
+
+def get_rssi(tag_position, add_noise=False, material_id=None):
     
-    if is_on_grid_line(x, y, grid_spacing=10):
-        return False
-    return True
-
-
-if os.path.exists("mat_loc.json"):
-    with open("mat_loc.json", "r") as f:
-        mat_loc = json.load(f)
-
-    materials_to_regenerate = [] # regenerate materials if they're on grid lines
-    for mat_id, pos in mat_loc.items():
-        if not valid_pos(pos[0], pos[1]):
-            materials_to_regenerate.append(mat_id)
+    if material_id and material_id in mat_rssi_data:
+        return mat_rssi_data[material_id]
     
-    for mat_id in materials_to_regenerate: # for mat_id placed on grid, replace it
-        while True:
-            x = random.randint(1, 99) 
-            y = random.randint(1, 99)
-            if valid_pos(x, y):
-                mat_loc[mat_id] = [x, y]
-                break
-    
-    # save if any materials were regenerated
-    if materials_to_regenerate:
-        with open("mat_loc.json", "w") as f:
-            json.dump(mat_loc, f)
-        print(f"Regenerated {len(materials_to_regenerate)} materials away from grid lines.")
-else:
-    mat_loc = {}
-    for i in range(200):
-        while True:
-            x = random.randint(1, 99)  
-            y = random.randint(1, 99)
-            if valid_pos(x, y):
-                mat_loc[f"MAT{str(i+1).zfill(3)}"] = [x, y]
-                break
-    with open("mat_loc.json", "w") as f:
-        json.dump(mat_loc, f)
-
-def get_rssi(tag_position,add_noise=True):
     rssi_values = {}
-
-    for zone, gw_pos in edge_gateways.items():
-        distance = np.linalg.norm(tag_position - np.array(gw_pos)) # get tag's position
-        # rnoise = np.random.normal(0, 3) if add_noise else 0
-        rssi = -59 - 10 * 2 * np.log10(distance + 1e-5) #+ rnoise # -> closer , less neg val. larger distance , positive val. and random noise
-        rssi_values[zone] = rssi
+    distances = np.sqrt((nodeloc_data['X'] - tag_position[0])**2 + (nodeloc_data['Y'] - tag_position[1])**2)
+    closest_idx = distances.idxmin()
+    
+    for ap in ap_columns:
+        rssi_values[ap] = nodeloc_data.loc[closest_idx, ap]
+    
     return rssi_values
 
 
-def get_coarse_location(tag_position):
-    rssi_data = get_rssi(tag_position) # max of rssi -> strongest signal
+def get_coarse_location(tag_position,material_id=None):
+    rssi_data = get_rssi(tag_position, material_id=material_id) # max of rssi -> strongest signal
     max_rssi = max(rssi_data.values())
 
     tied_zones = [zone for zone, rssi in rssi_data.items() if abs(rssi - max_rssi) <= 1.0]#to find which edge gateway has same rssi value
@@ -107,23 +92,22 @@ def get_coarse_location(tag_position):
     return coarse_location, max_rssi, rssi_data
 
 
-def fingerprint_dataset(step):
+def fingerprint_db():
     dataset = []
-    for x in range(0, 101, step):
-        for y in range(0, 101, step):
-            pos = np.array([x, y])
-            rssi_vector = list(get_rssi(pos).values())
-            dataset.append({"pos": (x, y), "rssi": rssi_vector})
+    for _, row in nodeloc_data.iterrows():
+        x, y = row['X'], row['Y']
+        rssi_vector = [row[ap] for ap in ap_columns]
+        dataset.append({"pos": (float(x), float(y)), "rssi": rssi_vector})
     return dataset
 
-if os.path.exists("fingerprint.json"):
-    with open("fingerprint.json", "r") as f:
+if os.path.exists("dataset/fingerprint.json"):
+    with open("dataset/fingerprint.json", "r") as f:
         dataset_ = json.load(f)
     print(f"\nLoading existing fingerprint dataset...")
     
 else:
-    dataset_ = fingerprint_dataset(step=1)
-    with open("fingerprint.json", "w") as f:
+    dataset_ = fingerprint_db()
+    with open("dataset/fingerprint.json", "w") as f:
         json.dump(dataset_, f)
     print(f"\nGenerated new fingerprint dataset....")
 
@@ -149,10 +133,10 @@ mlp_model.fit(X_train_s, y_train)
 
 
 
-def cloud_computation(tag_position):
+def cloud_computation(tag_position,material_id=None):
     print("Computing the exact location....waiting for cloud response...")
 
-    tag_rssi = list(get_rssi(tag_position, add_noise=False).values())
+    tag_rssi = list(get_rssi(tag_position, material_id=material_id).values())
     tag_rssi = np.array(tag_rssi).reshape(1, -1)
     tag_rssi_scaled = scaler.transform(tag_rssi)
 
@@ -189,21 +173,31 @@ def cloud_computation(tag_position):
 
 def find_path_a_star(start, end):   
     
-    start_grid = (round(start[0]//10)*10, round(start[1]//10)*10) # user pos(nearest to grid point)
+    start_grid = (round(start[0] * 10) / 10, round(start[1] * 10) / 10) # user pos(nearest to grid point)
     end_exact = (end[0], end[1]) # material place
-    end_grid = (round(end[0]//10)*10, round(end[1]//10)*10)  # nearest grid point to the material 
+    end_grid = (round(end[0] * 10) / 10, round(end[1] * 10) / 10) # nearest grid point to the material 
     
+    all_mat_x = [pos[0] for pos in mat_loc.values()]
+    all_mat_y = [pos[1] for pos in mat_loc.values()]
+    bound_min_x = min(all_mat_x) - 2
+    bound_max_x = max(all_mat_x) + 2
+    bound_min_y = min(all_mat_y) - 2
+    bound_max_y = max(all_mat_y) + 2
+
+
     def heuristic(a, b):
         return abs(a[0] - b[0]) + abs(a[1] - b[1]) # manhattan
     
     def get_neighbors(pos):
         neighbors = []
-        # only move along grid lines (* of 10), not through diagonals
-        for dx, dy in [(0,10), (10,0), (0,-10), (-10,0)]:
-            new_x, new_y = pos[0] + dx, pos[1] + dy
-            if 0 <= new_x <= 100 and 0 <= new_y <= 100:
+         # only move along grid lines (0.1), not through diagonals
+        for dx, dy in [(0, 0.1), (0.1, 0), (0, -0.1), (-0.1, 0)]:
+            new_x = round((pos[0] + dx) * 10) / 10
+            new_y = round((pos[1] + dy) * 10) / 10
+            if bound_min_x <= new_x <= bound_max_x and bound_min_y <= new_y <= bound_max_y:
                 neighbors.append((new_x, new_y))
         return neighbors
+    
     
     # A* algorithm
     start_time = time.time()
@@ -235,7 +229,7 @@ def find_path_a_star(start, end):
             return path, nodes_explored, elapsed, path_length
         
         for neighbor in get_neighbors(current):
-            tot_g_score = g_score[current] + 10  
+            tot_g_score = g_score[current] + 0.1 # each step cost 0.1 
             
             if neighbor not in g_score or tot_g_score < g_score[neighbor]:
                 came_from[neighbor] = current
@@ -248,16 +242,25 @@ def find_path_a_star(start, end):
 
 
 def find_path_dijkstra(start, end): # Diijkstra's algorihthm
-    start_grid = (round(start[0]//10)*10, round(start[1]//10)*10)
-    end_exact = (end[0], end[1])
-    end_grid = (round(end[0]//10)*10, round(end[1]//10)*10)
+    
+    start_grid = (round(start[0] * 10) / 10, round(start[1] * 10) / 10)
+    end_exact = (end[0]//10, end[1])
+    end_grid = (round(end[0] * 10) / 10, round(end[1] * 10) / 10)
+
+    all_mat_x = [pos[0] for pos in mat_loc.values()]
+    all_mat_y = [pos[1] for pos in mat_loc.values()]
+    bound_min_x = min(all_mat_x) - 2
+    bound_max_x = max(all_mat_x) + 2
+    bound_min_y = min(all_mat_y) - 2
+    bound_max_y = max(all_mat_y) + 2
 
     def get_neighbors(pos):
         neighbors = []
-        for dx, dy in [(0,10),(10,0),(0,-10),(-10,0)]:
-            new_x, new_y = pos[0]+dx, pos[1]+dy
-            if 0<=new_x<=100 and 0<=new_y<=100:
-                neighbors.append((new_x,new_y))
+        for dx, dy in [(0, 0.1), (0.1, 0), (0, -0.1), (-0.1, 0)]:
+            new_x = round((pos[0] + dx) * 10) / 10
+            new_y = round((pos[1] + dy) * 10) / 10
+            if bound_min_x <= new_x <= bound_max_x and bound_min_y <= new_y <= bound_max_y:
+                neighbors.append((new_x, new_y))
         return neighbors
 
     start_time = time.time()
@@ -283,7 +286,7 @@ def find_path_dijkstra(start, end): # Diijkstra's algorihthm
             return path, nodes_explored, elapsed, path_length
         
         for neighbor in get_neighbors(current):
-            tot_g_score = g_score[current]+10
+            tot_g_score = g_score[current]+ 0.1
             if neighbor not in g_score or tot_g_score<g_score[neighbor]:
                 came_from[neighbor]=current
                 g_score[neighbor]=tot_g_score
@@ -300,7 +303,7 @@ def path_analysis(user_pos, material_pos, material_id):
     path_d, nodes_d, time_d, length_d = find_path_dijkstra(user_pos, material_pos)
 
     
-    print(f"\nA* Path     --> Nodes Explored: {nodes_a}, Path Length: {length_a:.2f}, Time: {time_a:.2f}ms")
+    print(f"\nA* Path       --> Nodes Explored: {nodes_a}, Path Length: {length_a:.2f}, Time: {time_a:.2f}ms")
     print(f"Dijkstra Path --> Nodes Explored: {nodes_d}, Path Length: {length_d:.2f}, Time: {time_d:.2f}ms")
 
     
@@ -323,61 +326,89 @@ def path_analysis(user_pos, material_pos, material_id):
 
 
 
-def plot_all(material_positions, selected_tag_pos, coarse_zone, refined_location=None, show_path=False, path_a=None):
+def plot_all(material_positions, selected_tag_pos, coarse_zone, refined_location=None, show_path=False, path_a=None, selected_mat_id=None):
 
     plt.figure(figsize=(12, 10))
     
-    for i in range(0, 101, 10):
-        plt.axvline(x=i, color='lightgray', linestyle='-', linewidth=0.5, alpha=0.7)
-        plt.axhline(y=i, color='lightgray', linestyle='-', linewidth=0.5, alpha=0.7)
+    all_x = [pos[0] for pos in material_positions.values()]
+    all_y = [pos[1] for pos in material_positions.values()]
     
-    # plotting materials by avoiding grid lines
-    for mat_id, pos in material_positions.items():
-        plt.scatter(pos[0], pos[1], c='gray', marker='o', s=50, alpha=0.6)
-        plt.text(pos[0] + 0.5, pos[1] + 0.5, mat_id, fontsize=6)
+    gw_x = [pos[0] for pos in edge_gateways.values()]
+    gw_y = [pos[1] for pos in edge_gateways.values()]
     
+    min_x = min(min(all_x), min(gw_x), selected_tag_pos[0]) - 2
+    max_x = max(max(all_x), max(gw_x), selected_tag_pos[0]) + 2
+    min_y = min(min(all_y), min(gw_y), selected_tag_pos[1]) - 2
+    max_y = max(max(all_y), max(gw_y), selected_tag_pos[1]) + 2
     
+    grid_spacing = 0.1  
+    x_start = int(min_x / grid_spacing) * grid_spacing
+    x_end = int(max_x / grid_spacing + 1) * grid_spacing
+    y_start = int(min_y / grid_spacing) * grid_spacing
+    y_end = int(max_y / grid_spacing + 1) * grid_spacing
+
+    for i in np.arange(x_start, x_end + grid_spacing, grid_spacing):
+        plt.axvline(x=i, color='lightgray', linestyle='-', linewidth=0.3, alpha=0.5)
+    for i in np.arange(y_start, y_end + grid_spacing, grid_spacing):
+        plt.axhline(y=i, color='lightgray', linestyle='-', linewidth=0.3, alpha=0.5)
+
+
+    plt.scatter(selected_tag_pos[0], selected_tag_pos[1], c='red', marker='X', s=300, 
+                label=f'Selected Material: {selected_mat_id}', edgecolors='black', linewidths=2)
+    plt.text(selected_tag_pos[0] + 0.1, selected_tag_pos[1] + 0.1, selected_mat_id, 
+             fontsize=10, fontweight='bold')
+    
+   
     for zone, pos in edge_gateways.items():
         plt.scatter(pos[0], pos[1], marker='s', s=200,
-                   color='green' if zone == coarse_zone else 'blue')
-        plt.text(pos[0] + 1, pos[1] + 1, zone, fontsize=9)
+                   color='green' if zone == coarse_zone else 'blue',
+                   edgecolors='black', linewidths=1.5)
+        plt.text(pos[0] + 0.1, pos[1] + 0.1, zone, fontsize=9, fontweight='bold')
     
-    plt.scatter(door_position[0], door_position[1], c='purple', marker='D', s=150)
-    plt.text(door_position[0] - 2, door_position[1] + 2, 'Door', fontsize=10, color='purple')
-    
-    plt.scatter(user_pos[0], user_pos[1], c='orange', marker='*', s=200)
-    plt.text(door_position[0] + 3, door_position[1] - 3, 'User', fontsize=10, color='purple')
-    
-    plt.scatter(selected_tag_pos[0], selected_tag_pos[1], c='red', marker='x', s=150)
-    
-    if refined_location is not None:
-        best_model = min(refined_location, key=lambda m: np.linalg.norm(refined_location[m] - selected_tag_pos))
-        best_pos = refined_location[best_model]
 
+    plt.scatter(door_position[0], door_position[1], c='purple', marker='D', s=150, 
+                label='Door', edgecolors='black', linewidths=1.5)
+    plt.text(door_position[0] - 0.3, door_position[1] + 0.3, 'Door', fontsize=10, color='purple')
+    
+    plt.scatter(user_pos[0], user_pos[1], c='orange', marker='*', s=300, 
+                label='User', edgecolors='black', linewidths=1.5)
+    plt.text(user_pos[0] + 0.3, user_pos[1] - 0.3, 'User', fontsize=10, color='orange')
+    
+   
+    if refined_location is not None:
         colors = {"KNN": "olive", "Random Forest": "cyan", "MLP (NN)": "magenta"}
         markers = {"KNN": "X", "Random Forest": "P", "MLP (NN)": "D"}
         for model_name, pos in refined_location.items():
-            plt.scatter(pos[0], pos[1], c=colors[model_name], marker=markers[model_name],s=150, label=f"{model_name} Prediction")
+            plt.scatter(pos[0], pos[1], c=colors[model_name], marker=markers[model_name],
+                       s=150, label=f"{model_name} Prediction", edgecolors='black', linewidths=1.5)
     
-        
+    
     if show_path and path_a is not None:
-        plt.plot([p[0] for p in path_a], [p[1] for p in path_a],'lightcoral', linewidth=3, label='A* Path')
+   
+        plt.plot([p[0] for p in path_a], [p[1] for p in path_a], 'lightcoral', linewidth=3, label='A* Path')
+    
 
-    plt.legend()      
+        plt.scatter(path_a[-1][0], path_a[-1][1], c='lightcoral', marker='o', s=100, zorder=0.6)
+
+    plt.legend(loc='best', fontsize=9)      
     plt.grid(True, alpha=0.3)
-    plt.xlim(-5, 105)
-    plt.ylim(-5, 105)
+    plt.xlim(min_x, max_x)
+    plt.ylim(min_y, max_y)
+    plt.xlabel('X (meters)', fontsize=11)
+    plt.ylabel('Y (meters)', fontsize=11)
+    plt.title(f'Material Localization: {selected_mat_id}', fontsize=13, fontweight='bold')
+    plt.tight_layout()
     plt.show(block=False)
 
 
 def simulation():
-    print(f"\nAvailable Material IDs :")
-    print(", ".join(list(mat_loc.keys())))
+    #print(f"\nAvailable Material IDs :")
+   # print(", ".join(list(mat_loc.keys())))
     material_id = input("\nEnter Material ID : ").strip().upper()
     
     if material_id in mat_loc:
         tag_pos = np.array(mat_loc[material_id])
-        coarse_zone, max_rssi, rssi_details = get_coarse_location(tag_pos)
+        coarse_zone, max_rssi, rssi_details = get_coarse_location(tag_pos, material_id=material_id)
         
         print(f"\nMaterial ID: {material_id}")
         print("RSSI values:")
@@ -390,7 +421,7 @@ def simulation():
         # for cloud
         c_input = input("\nDo you want to compute the exact location via Cloud? (yes/no): ").strip().lower()
         if c_input == 'yes':
-            refined_zone = cloud_computation(tag_pos)
+            refined_zone = cloud_computation(tag_pos,material_id=material_id)
             print(f"Refined location: {refined_zone}")
             
             # path
@@ -402,11 +433,12 @@ def simulation():
             print("Skipping Cloud computation.")
 
         path_a, _ = path_analysis(user_pos, tag_pos, material_id)
-        plot_all(mat_loc, tag_pos, coarse_zone, refined_zone, show_path=show_path,path_a=path_a)
+        plot_all(mat_loc, tag_pos, coarse_zone, refined_zone, show_path=show_path,path_a=path_a,selected_mat_id=material_id)
         
         m_input = input("\nHas the material picked up? (yes/no): ").strip().lower()
         if m_input == 'yes':
             del mat_loc[material_id]
+            del mat_rssi_data[material_id]
             print(f"Material {material_id} has been picked up and removed from the material list.")
             
             with open("mat_loc.json", "w") as f:
