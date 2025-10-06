@@ -1,10 +1,8 @@
 from flask import Flask, render_template, request, redirect, url_for, flash, Response
-import matplotlib
-matplotlib.use('Agg') 
 import matplotlib.pyplot as plt
 import io
 
-
+import resource_locator as rl
 
 app = Flask(__name__)
 app.secret_key = "edge_project_demo"
@@ -12,24 +10,7 @@ app.secret_key = "edge_project_demo"
 # Dummy credentials
 users = {"worker1": "1234", "worker2": "abcd"}
 
-# Dummy material locations (Zone names for display)
-items = {
-    "M001": "Zone A - Near Assembly Line",
-    "M002": "Zone B - Storage Area",
-    "M003": "Zone C - Loading Dock"
-}
-
-# Coordinates for plotting
-item_coords = {
-    "M001": (3, 4),
-    "M002": (7, 5),
-    "M003": (4, 7)
-}
-
-# Gateways
-gateways = [(2, 2), (8, 2), (5, 8)]
-
-
+# ---------------- Login ----------------
 @app.route("/", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
@@ -44,52 +25,59 @@ def login():
     return render_template("login.html")
 
 
-
+# ---------------- Search ----------------
 @app.route("/search", methods=["GET", "POST"])
 def search():
     location = None
+    material_id = None
     if request.method == "POST":
-        item_id = request.form["item_id"].strip()
-        if item_id in items:
-            location = items[item_id]   # Zone name shown here
+        material_id = request.form["item_id"].strip().upper()
+        
+        # ✅ Check if this material exists in real data
+        if material_id in rl.mat_loc:
+            tag_pos = rl.mat_loc[material_id]
+            coarse_zone, max_rssi, rssi_details = rl.get_coarse_location(rl.np.array(tag_pos))
+            location = f"{coarse_zone} (approx.)"
         else:
-            location = "Not Found"
-    return render_template("search.html", location=location)
+            location = "Material Not Found"
+            
+    return render_template("search.html", location=location, material_id=material_id)
 
 
-
+# ---------------- Map ----------------
 @app.route("/map")
 def map_view():
     return render_template("resourcemap.html")
+
 
 @app.route("/plot.png")
 def plot_png():
     fig, ax = plt.subplots()
 
-    # Plot gateways (red squares)
-    for gx, gy in gateways:
-        ax.plot(gx, gy, 'rs', markersize=10, label="Gateway")
+    # ✅ Gateways (red squares)
+    for zone, pos in rl.edge_gateways.items():
+        ax.plot(pos[0], pos[1], 'rs', markersize=8)
+        ax.text(pos[0] + 1, pos[1], zone, fontsize=8)
 
-    # Plot items (blue dots with IDs)
-    for item, (x, y) in item_coords.items():
+    # ✅ Materials (blue dots)
+    for mat_id, (x, y) in rl.mat_loc.items():
         ax.plot(x, y, 'bo')
-        ax.text(x + 0.2, y, item)
+        ax.text(x + 1, y + 1, mat_id, fontsize=6)
 
-    ax.set_title("Factory Resource Map")
-    ax.set_xlim(0, 10)
-    ax.set_ylim(0, 10)
+    ax.set_title("Factory Resource Map (Live Layout)")
+    ax.set_xlim(0, 110)
+    ax.set_ylim(0, 110)
     ax.set_xlabel("X-axis")
     ax.set_ylabel("Y-axis")
 
-    # Save figure to PNG
     output = io.BytesIO()
-    plt.savefig(output, format='png')
+    plt.savefig(output, format='png', bbox_inches="tight")
     plt.close(fig)
     output.seek(0)
     return Response(output.getvalue(), mimetype='image/png')
 
 
-
+# ---------------- Item Found ----------------
 @app.route("/itemfound")
 def itemfound():
     return render_template("itemfound.html")
