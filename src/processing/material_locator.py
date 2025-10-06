@@ -14,7 +14,7 @@ import time
 
 import pandas as pd
 
-aploc = pd.read_csv('dataset/aploc.csv', header=None, names=['X', 'Y'])
+aploc = pd.read_csv('src/dataset/aploc.csv', header=None, names=['X', 'Y'])
 
 edge_gateways = {}
 
@@ -23,7 +23,7 @@ for idx, row in aploc.iterrows():
 
 
 # load mate pos and rssi data 
-nodeloc = pd.read_csv('dataset/nodeloc_ss.csv', sep=',')
+nodeloc = pd.read_csv('src/dataset/nodeloc_ss.csv', sep=',')
 nodeloc.columns = nodeloc.columns.str.strip()
 
 ap_columns = [col for col in nodeloc.columns if col.startswith('AP')]
@@ -100,14 +100,14 @@ def fingerprint_db():
         dataset.append({"pos": (float(x), float(y)), "rssi": rssi_vector})
     return dataset
 
-if os.path.exists("dataset/fingerprint.json"):
-    with open("dataset/fingerprint.json", "r") as f:
+if os.path.exists("src/dataset/fingerprint.json"):
+    with open("src/dataset/fingerprint.json", "r") as f:
         dataset_ = json.load(f)
     print(f"\nLoading existing fingerprint dataset...")
     
 else:
     dataset_ = fingerprint_db()
-    with open("dataset/fingerprint.json", "w") as f:
+    with open("src/dataset/fingerprint.json", "w") as f:
         json.dump(dataset_, f)
     print(f"\nGenerated new fingerprint dataset....")
 
