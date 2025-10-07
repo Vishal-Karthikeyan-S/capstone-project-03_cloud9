@@ -14,6 +14,8 @@ import time
 
 import pandas as pd
 
+import simpy
+
 aploc = pd.read_csv('src/dataset/aploc.csv', header=None, names=['X', 'Y'])
 
 edge_gateways = {}
@@ -162,7 +164,7 @@ def cloud_computation(tag_position,material_id=None):
     errors = [results[m]["error"] for m in model_names]
     plt.bar(model_names, errors, color=['blue','green','orange'])
     plt.ylabel("Localization Error (m)")
-    plt.title("Model Comparison for This Material")
+    plt.title(f"Model Comparison for {material_id} Material")
     plt.show(block=False)
 
     
@@ -400,53 +402,126 @@ def plot_all(material_positions, selected_tag_pos, coarse_zone, refined_location
     plt.tight_layout()
     plt.show(block=False)
 
-
-def simulation():
-    #print(f"\nAvailable Material IDs :")
-   # print(", ".join(list(mat_loc.keys())))
-    material_id = input("\nEnter Material ID : ").strip().upper()
-    
-    if material_id in mat_loc:
-        tag_pos = np.array(mat_loc[material_id])
+class WarehouseSimulation:
+    def __init__(self, env):
+        self.env = env
+        self.mat_loc = mat_loc.copy()
+        self.mat_rssi_data = mat_rssi_data.copy()
+        
+    def material_request_process(self, material_id):
+        
+        if material_id not in self.mat_loc:
+            print(f"\n[{self.env.now:.2f}s] Material ID '{material_id}' not found!")
+            return
+        
+        tag_pos = np.array(self.mat_loc[material_id])
+        
+        #  coarse location
+        print(f"\n[{self.env.now:.2f}s] Starting coarse location for {material_id}...")
+        yield self.env.timeout(0.5)
+        print("\n\n" + "-"*60)
         coarse_zone, max_rssi, rssi_details = get_coarse_location(tag_pos, material_id=material_id)
         
-        print(f"\nMaterial ID: {material_id}")
+        print(f"[{self.env.now:.2f}s] Material ID: {material_id}")
         print("RSSI values:")
-
         for zone, rssi in rssi_details.items():
-            print(f" {zone}: {rssi:.2f} dBm\n")
-        print(f"\nMax RSSI: {max_rssi:.2f} dBm\n")
+            print(f" {zone}: {rssi:.2f} dBm")
+        print(f"\nMax RSSI: {max_rssi:.2f} dBm")
         print(f"Coarse Location Zone: {coarse_zone}")
-        
-        # for cloud
-        c_input = input("\nDo you want to compute the exact location via Cloud? (yes/no): ").strip().lower()
-        if c_input == 'yes':
-            refined_zone = cloud_computation(tag_pos,material_id=material_id)
-            print(f"Refined location: {refined_zone}")
-            
-            # path
-            path_input = input("\nDo you want to see the path to the material? (yes/no): ").strip().lower()
-            show_path = path_input == 'yes'
-        else:
-            refined_zone = None
-            show_path = False
-            print("Skipping Cloud computation.")
 
-        path_a, _ = path_analysis(user_pos, tag_pos, material_id)
-        plot_all(mat_loc, tag_pos, coarse_zone, refined_zone, show_path=show_path,path_a=path_a,selected_mat_id=material_id)
+        print("\n" + "-"*60)
+        # cloud compute
+        print(f"\n[{self.env.now:.2f}s] Sending data to cloud for fine location...")
+        yield self.env.timeout(2.0)
         
-        m_input = input("\nHas the material picked up? (yes/no): ").strip().lower()
+        refined_zone = cloud_computation(tag_pos, material_id=material_id)
+        print(f"[{self.env.now:.2f}s] Refined location received: {refined_zone}")
+        
+        print("\n\n" + "-"*60)
+        # path
+        print(f"\n[{self.env.now:.2f}s] Computing optimal path...")
+        print("\n" + "-"*60)
+        yield self.env.timeout(0.3)
+        
+        path_a, path_d = path_analysis(user_pos, tag_pos, material_id)
+        
+        
+        plot_all(self.mat_loc, tag_pos, coarse_zone, refined_zone, show_path=True, path_a=path_a, selected_mat_id=material_id)
+        
+      
+        path_length = sum(np.linalg.norm(np.array(path_a[i])-np.array(path_a[i-1])) for i in range(1, len(path_a)))
+        travel_speed = 1.0
+        travel_time = path_length / travel_speed
+        
+        yield self.env.timeout(travel_time)
+        
+     
+        m_input = input(f"\n[{self.env.now:.2f}s] Has material {material_id} been picked up? (yes/no): ").strip().lower()
+        
+        print("\n\n" + "-"*60)
+
         if m_input == 'yes':
-            del mat_loc[material_id]
-            del mat_rssi_data[material_id]
-            print(f"Material {material_id} has been picked up and removed from the material list.")
-            
-            with open("mat_loc.json", "w") as f:
-                json.dump(mat_loc, f)
+            yield self.env.timeout(1.0)
+            del self.mat_loc[material_id]
+            del self.mat_rssi_data[material_id]
+            print(f"[{self.env.now:.2f}s] Material {material_id} removed from inventory")
         else:
-            print(f"Material is not picked up. It's still in list.")
-    else:
-        print(f"Material ID '{material_id}' not found!")
+            print(f"[{self.env.now:.2f}s] Material {material_id} remains in warehouse")
+        
+        print(f"[{self.env.now:.2f}s] ===== Request completed =====\n")
+    
+    
+    def user_request_generator(self, material_ids, inter_arrival_time=5.0):
+       
+        for material_id in material_ids:
+            yield self.env.timeout(inter_arrival_time)
+            print(f"\n{'='*60}")
+            print(f"[{self.env.now:.2f}s] NEW REQUEST: {material_id}")
+            print(f"{'='*60}")
+            self.env.process(self.material_request_process(material_id))
+
+def run_simulation_mode():
+    
+    print("\n" + "-"*60)
+
+    available_materials = list(mat_loc.keys())
+    print(f"\nTotal available materials: {len(available_materials)}")
+    print(f"\nAvailable Material IDs:")
+    
+    for i in range(0, len(available_materials), 10):
+        print(", ".join(available_materials[i:i+10]))
+    
+    print("\n" + "-"*60)
+    materials_input = input("Enter Material IDs separated by commas : ").strip().upper()
+    
+    materials_to_request = [mat.strip() for mat in materials_input.split(',')]
+    
+    
+    invalid_materials = [mat for mat in materials_to_request if mat not in mat_loc]
+    if invalid_materials:
+        print(f"\nWarning: These materials r not found: {', '.join(invalid_materials)}")
+        materials_to_request = [mat for mat in materials_to_request if mat in mat_loc]
+    
+    if not materials_to_request:
+        print("No valid materials selected.")
+        return
+    
+    print(f"\nSimulating requests for: {', '.join(materials_to_request)}")
+    
+    
+    env = simpy.Environment()
+    warehouse = WarehouseSimulation(env)
+    
+    env.process(warehouse.user_request_generator(materials_to_request, inter_arrival_time=0))
+    
+  
+    env.run()
+    
+    print("\n" + "="*60)
+    print(f"Materials remaining in warehouse: {len(warehouse.mat_loc)}")
+    print("="*60+"\n")
 
 
-simulation()
+
+run_simulation_mode()
+plt.show()
