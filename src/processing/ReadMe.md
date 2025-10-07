@@ -14,7 +14,7 @@ We selected Wi-Fi over BLE for this project based on practical considerations an
 
 - **Higher Data Throughput & Scalability :** Wi-Fi supports higher data rates and larger network capacity, allowing the system to scale to more tags or future data-intensive tasks without major infrastructure changes.  
 
-This approach ensures efficient deployment, low average power usage, reliable tracking and long-term system scalability in an industrial environment.
+This approach ensures efficient deployment, low average power usage, reliable tracking and long-term system scalability in an industrial environment. Wi-Fi is better for low-density infrastructure, which was the critical cost-saving factor for covering a vast industrial park with over a thousand assets.
 
 
  
