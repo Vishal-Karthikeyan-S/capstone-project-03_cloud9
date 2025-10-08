@@ -2,7 +2,7 @@ from flask import Flask, render_template, request, redirect, url_for, flash, Res
 import matplotlib.pyplot as plt
 import io
 
-import resource_locator as rl
+import material_locator as ml
 
 app = Flask(__name__)
 app.secret_key = "edge_project_demo"
@@ -34,9 +34,9 @@ def search():
         material_id = request.form["item_id"].strip().upper()
         
         # ✅ Check if this material exists in real data
-        if material_id in rl.mat_loc:
-            tag_pos = rl.mat_loc[material_id]
-            coarse_zone, max_rssi, rssi_details = rl.get_coarse_location(rl.np.array(tag_pos))
+        if material_id in ml.mat_loc:
+            tag_pos = ml.mat_loc[material_id]
+            coarse_zone, max_rssi, rssi_details = ml.get_coarse_location(ml.np.array(tag_pos))
             location = f"{coarse_zone} (approx.)"
         else:
             location = "Material Not Found"
@@ -54,13 +54,13 @@ def map_view():
 def plot_png():
     fig, ax = plt.subplots()
 
-    # ✅ Gateways (red squares)
-    for zone, pos in rl.edge_gateways.items():
+    #  Gateways (red squares)
+    for zone, pos in ml.edge_gateways.items():
         ax.plot(pos[0], pos[1], 'rs', markersize=8)
         ax.text(pos[0] + 1, pos[1], zone, fontsize=8)
 
-    # ✅ Materials (blue dots)
-    for mat_id, (x, y) in rl.mat_loc.items():
+    #  Materials (blue dots)
+    for mat_id, (x, y) in ml.mat_loc.items():
         ax.plot(x, y, 'bo')
         ax.text(x + 1, y + 1, mat_id, fontsize=6)
 
@@ -85,3 +85,4 @@ def itemfound():
 
 if __name__ == "__main__":
     app.run(debug=True)
+
