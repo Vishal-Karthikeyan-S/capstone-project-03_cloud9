@@ -4,7 +4,16 @@ from collections import defaultdict
 import numpy as np
 import matplotlib.pyplot as plt
 
-from material_locator import (
+import os
+import sys
+current_dir = os.path.dirname(os.path.abspath(__file__))
+
+project_root = os.path.abspath(os.path.join(current_dir, '..', '..'))
+
+if project_root not in sys.path:
+    sys.path.append(project_root)
+
+from src.processing.material_locator import (
     edge_gateways, door_position, user_pos,
     is_on_grid_line, valid_pos, simulation,
     get_rssi, get_coarse_location, cloud_computation,
