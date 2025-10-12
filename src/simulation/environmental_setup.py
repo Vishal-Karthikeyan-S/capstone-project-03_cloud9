@@ -1,10 +1,8 @@
 import numpy as np
-import matplotlib.pyplot as plt
 import pandas as pd
+import matplotlib.pyplot as plt
 from scipy.spatial.distance import cdist
 from filterpy.kalman import KalmanFilter
-from matplotlib.animation import FuncAnimation
-import json
 import warnings
 
 warnings.filterwarnings('ignore', category=pd.errors.DtypeWarning)
@@ -14,263 +12,157 @@ aploc_url = "https://github.com/23CSE362-edge-computing-2025-26-odd/capstone-pro
 nodeloc_url = "https://github.com/23CSE362-edge-computing-2025-26-odd/capstone-project-03_cloud9/raw/refs/heads/main/src/dataset/nodeloc_ss.csv"
 
 def load_csv_safely(url, usecols=None, header=None, dtype=None, low_memory=False):
-    """Safely load CSV, handling mixed types and errors."""
     try:
         df = pd.read_csv(url, usecols=usecols, header=header, dtype=dtype, low_memory=low_memory)
-        print(f"Successfully loaded {url}. Shape: {df.shape}")
-        print(f"First few rows:\n{df.head()}")
+        print(f"Loaded {url} — Shape: {df.shape}")
         return df
     except Exception as e:
         print(f"Error loading {url}: {e}. Using fallback data.")
         return None
 
 def normalize_positions(data, scale=10.0):
-    """Normalize positions to [0, scale], handling division by zero and NaNs."""
-    data = np.asarray(data)
+    data = np.asarray(data, dtype=float)
     if data.size == 0:
-        print("Warning: Empty data for normalization. Returning zeros.")
-        return np.zeros((0, data.shape[1]) if len(data.shape) > 1 else (0,))
+        return np.zeros((0, 2))
+    min_vals = np.nanmin(data, axis=0)
+    max_vals = np.nanmax(data, axis=0)
+    ranges = np.where(max_vals - min_vals == 0, 1, max_vals - min_vals)
+    norm = (data - min_vals) / ranges * scale
+    return np.nan_to_num(norm, nan=0.0)
 
-    with np.errstate(divide='ignore', invalid='ignore'):
-        min_vals = np.min(data, axis=0)
-        max_vals = np.max(data, axis=0)
-        range_vals = max_vals - min_vals
 
-        normalized = np.zeros_like(data, dtype=float)
-        for i in range(data.shape[1]):
-            if range_vals[i] == 0 or np.isnan(range_vals[i]):
-                normalized[:, i] = 0.0  
-                print(f"Warning: Constant/NaN range in column {i} (range={range_vals[i]}). Set to 0.")
-            else:
-                normalized[:, i] = (data[:, i] - min_vals[i]) / range_vals[i] * scale
-
-        normalized = np.nan_to_num(normalized, nan=0.0, posinf=scale, neginf=0.0)
-        return normalized
-
-print("Loading gateway positions...")
-gateway_df = load_csv_safely(aploc_url, usecols=[0, 1], header=None, dtype={0: float, 1: float}, low_memory=False)
+print("\nLoading gateway positions...")
+gateway_df = load_csv_safely(aploc_url, header=None, dtype=float)
 if gateway_df is not None and not gateway_df.empty:
     gateway_positions = gateway_df.values
-    print("Gateway positions:\n", gateway_positions)
 else:
-    gateway_positions = np.array([[0, 0], [20, 0], [20, 10], [0, 10]])
+    gateway_positions = np.array([[0,0],[20,0],[20,10],[0,10]])
     print("Using fallback gateway positions.")
 
+
 print("\nLoading tag positions...")
-tag_df_raw = load_csv_safely(nodeloc_url, usecols=[0, 1], header=None, dtype={0: float, 1: float}, low_memory=False)
-last_positions = np.empty((0, 2))
-tag_trajectories = {}
-unique_tags = []
+tag_df_full = load_csv_safely(nodeloc_url, header=None, low_memory=False)
 
-if tag_df_raw is not None and not tag_df_raw.empty:
-    tag_positions = tag_df_raw.values
-    print("Raw tag positions shape:", tag_positions.shape)
+if tag_df_full is not None and not tag_df_full.empty:
+    tag_df_numeric = tag_df_full.apply(pd.to_numeric, errors='coerce')
+    variances = tag_df_numeric.var(axis=0, skipna=True)
+    coord_cols = variances[variances > 1e-6].index.tolist()
+
+    if len(coord_cols) >= 2:
+        tag_positions = tag_df_numeric[coord_cols[:2]].dropna().values
+        print(f"Detected coordinate columns: {coord_cols[:2]}")
+    else:
+        numeric_cols = tag_df_numeric.columns[:2]
+        tag_positions = tag_df_numeric[numeric_cols].dropna().values
+
+    tag_positions = normalize_positions(tag_positions, scale=10.0)
     
-    # Normalize
-    last_positions = normalize_positions(tag_positions, scale=10.0)
-    print("Normalized tag positions shape:", last_positions.shape)
- 
-    print("\nLoading full tag dataset for unique tags...")
-    full_tag_df = load_csv_safely(nodeloc_url, dtype=str, low_memory=False)
-    if full_tag_df is not None and not full_tag_df.empty:
-        print("Full columns:", full_tag_df.columns.tolist())
-        print("Full shape:", full_tag_df.shape)
-        
-   
-        try:
-            full_tag_df['Node'] = full_tag_df.iloc[:, 0].astype(str).str.strip()  
-            unique_tags = full_tag_df['Node'].unique()
-            print(f"Unique tags found: {len(unique_tags)}")
-            
-            
-            for tag_id in unique_tags[:10]:
-                tag_data = full_tag_df[full_tag_df['Node'] == tag_id]
-                if len(tag_data) > 0:
-                    pos_cols = tag_data.iloc[:, 1:3].apply(pd.to_numeric, errors='coerce').dropna()
-                    if len(pos_cols) > 0:
-                        positions = pos_cols.values
-                        tag_trajectories[tag_id] = normalize_positions(positions, scale=10.0)
-                        print(f"Tag {tag_id}: {len(positions)} positions")
-            
-            if tag_trajectories:
-                last_positions = np.vstack([traj[-1] for traj in tag_trajectories.values()])
-            unique_tags = list(tag_trajectories.keys())
-        except Exception as e:
-            print(f"Error processing unique tags: {e}. Using all positions as unique tags.")
-            unique_tags = range(len(last_positions))
+    max_plot = 500
+    total_tags = tag_positions.shape[0]
+    if total_tags > max_plot:
+        print(f"Large dataset ({total_tags} rows). Sampling first {max_plot} for visualization.")
+        tag_positions_plot = tag_positions[:max_plot]
+    else:
+        tag_positions_plot = tag_positions
+
+    unique_tags = [f"Tag_{i}" for i in range(tag_positions_plot.shape[0])]
+    print(f"Loaded {total_tags} total tag positions ({len(unique_tags)} shown on plot).")
 else:
-
-    sample_pos_str = "1.2,1.2 5.1,1.2 9,1.2 1.2,5.1 5.1,5.1 9,5.1 5.1,9 9,9 5.7,0.6 2.4,4.5"
-    sample_positions = [list(map(float, pair.split(','))) for pair in sample_pos_str.split()]
-    last_positions = normalize_positions(np.array(sample_positions), scale=10.0)
-    unique_tags = [f"Tag_{i}" for i in range(len(last_positions))]
-    print("Using fallback normalized tag positions.")
-
-if len(last_positions) == 0:
-    last_positions = np.array([[2, 3], [5, 8], [10, 5]])  
-    unique_tags = ["Tag1", "Tag2", "Tag3"]
-    print("Using minimal fallback positions.")
-
-print(f"\nFinal unique tags/positions: {len(unique_tags)}")
-
+    tag_positions = np.array([
+        [1.2,1.2],[5.1,1.2],[9,1.2],
+        [1.2,5.1],[5.1,5.1],[9,5.1],
+        [5.1,9],[9,9],[5.7,0.6],[2.4,4.5]
+    ])
+    tag_positions_plot = tag_positions
+    tag_positions = normalize_positions(tag_positions, scale=10.0)
+    unique_tags = [f"Tag_{i}" for i in range(len(tag_positions))]
+    print("Using fallback tag positions.")
 
 def rssi_from_distance(dist, P0=-59, n=2.0, d0=1.0, shadow_sigma=2.0, rng=None):
     with np.errstate(divide='ignore', invalid='ignore'):
         path_loss = -10 * n * np.log10(np.maximum(dist, d0) / d0)
-    shadow = 0 if rng is None else rng.normal(0, shadow_sigma, size=dist.shape)
+    shadow = 0.0 if rng is None else rng.normal(0, shadow_sigma, size=dist.shape)
     return P0 + path_loss + shadow
 
-def make_kalman_filter(x0=-60, Q=0.1, R=1.0):
-    try:
-        kf = KalmanFilter(dim_x=1, dim_z=1) 
-        kf.x = np.array([[x0]], dtype=float)
-        kf.F = np.array([[1.0]])
-        kf.H = np.array([[1.0]])
-        kf.P = np.array([[1.0]])
-        kf.R = np.array([[float(R)]])
-        kf.Q = np.array([[float(Q)]])
-        return kf
-    except Exception as e:
-        print(f"Error creating KalmanFilter: {e}. Using simple filter.")
-        return None
 
-class MovingAverage:
-    def __init__(self, window=5):
-        self.window = window
-        self.values = []
+def get_filtered_rssi_vectorized(
+    tag_positions,
+    gateway_positions,
+    steps=10,
+    P0=-59.0,
+    n=2.0,
+    shadow_sigma=2.0,
+    Q=0.1,
+    R=1.0,
+    rng_seed=42,
+    export_csv_path=None
+):
+    rng = np.random.default_rng(rng_seed)
+    tag_positions = np.asarray(tag_positions)
+    n_tags, n_gws = tag_positions.shape[0], gateway_positions.shape[0]
 
-    def update(self, val):
-        self.values.append(float(val))
-        if len(self.values) > self.window:
-            self.values.pop(0)
-        return np.mean(self.values)
+    # Initialize Kalman states
+    x = np.full((n_tags, n_gws), P0, dtype=float) 
+    P = np.ones((n_tags, n_gws), dtype=float)      
+    
+    history = []
 
-def simulate_tags(tag_positions, steps=20, method="kalman", rng_seed=42, export=None, real_trajectories=None):  # Reduced steps for speed
-    try:
-        rng = np.random.default_rng(rng_seed)
-        n_tags = tag_positions.shape[0]
-        n_gws = gateway_positions.shape[0]
-        print(f"Simulating {n_tags} tags, {n_gws} gateways, {steps} steps...")
+    for t in range(steps):
+        dists = cdist(tag_positions, gateway_positions)
+        meas = rssi_from_distance(dists, P0=P0, n=n, shadow_sigma=shadow_sigma, rng=rng)
 
-        if method == "kalman":
-            filters = {}
-            for i in range(n_tags):
-                for j in range(n_gws):
-                    kf = make_kalman_filter()
-                    if kf is None:
-                        print("Kalman filter failed; falling back to Moving Average.")
-                        method = "ma"  # Fallback
-                        break
-                    filters[(i, j)] = kf
-            if method != "kalman":
-                filters = {(i, j): MovingAverage(window=5) for i in range(n_tags) for j in range(n_gws)}
-        else:
-            filters = {(i, j): MovingAverage(window=5) for i in range(n_tags) for j in range(n_gws)}
+        x_pred = x
+        P_pred = P + Q
+        K = P_pred / (P_pred + R)
+        x = x_pred + K * (meas - x_pred)
+        P = (1 - K) * P_pred
 
-        rssi_hist = {key: [] for key in filters}
+        history.append(x.copy())
 
-        if real_trajectories:
-            tag_traj = real_trajectories
-            steps = len(tag_traj)
-        else:
-            tag_traj = [tag_positions.copy() for _ in range(steps)]
+    filtered_rssi = x  
 
-        for t in range(steps):
-            dists = cdist(tag_traj[t], gateway_positions)
-            rssi_vals = rssi_from_distance(dists, rng=rng)
-            for i in range(n_tags):
-                for j in range(n_gws):
-                    meas = rssi_vals[i, j]
-                    f = filters[(i, j)]
-                    if method == "kalman":
-                        f.predict()
-                        f.update(meas)
-                        val = f.x[0, 0]
-                    else:
-                        val = f.update(meas)
-                    rssi_hist[(i, j)].append(val)
+    if export_csv_path:
+        df = pd.DataFrame(np.array(history).transpose(1,2,0).reshape(n_tags*n_gws, steps))
+        df.index = [f"T{i}_G{j}" for i in range(n_tags) for j in range(n_gws)]
+        df.to_csv(export_csv_path)
+        print(f"RSSI time series exported to {export_csv_path}")
 
-        filtered_map = np.array([
-            [rssi_hist[(i, j)][-1] for j in range(n_gws)]
-            for i in range(n_tags)
-        ])
+    return filtered_rssi, history
 
-        if export == "csv":
-            df = pd.DataFrame({
-                f"T{i}_G{j}": rssi_hist[(i, j)]
-                for i in range(n_tags) for j in range(n_gws)
-            })
-            df.to_csv("rssi_timeseries.csv", index_label="Step")
-            print("Exported RSSI to rssi_timeseries.csv")
 
-        return filtered_map, tag_traj, rssi_hist
-    except Exception as e:
-        print(f"Simulation error: {e}")
-        return None, None, None
+def plot_2d_positions(gateway_positions, tag_positions, unique_tags=None, title="2D Layout", max_tags=300):
+    plt.figure(figsize=(12, 10))
+    plt.scatter(gateway_positions[:,0], gateway_positions[:,1], marker='*', s=200, c='red', label='Gateways')
+    for i, (x, y) in enumerate(gateway_positions):
+        plt.annotate(f"GW_{i}", (x, y), xytext=(5,5), textcoords='offset points', fontsize=10, fontweight='bold')
 
-def plot_2d_positions(gateway_positions, tag_positions, unique_tags, title="2D Visualization of Unique Tags and Gateways"):
-    fig, ax = plt.subplots(figsize=(10, 8))
-    ax.scatter(gateway_positions[:, 0], gateway_positions[:, 1], marker='*', s=200, c='red', label='Gateways')
-    scatter = ax.scatter(tag_positions[:, 0], tag_positions[:, 1], c='blue', s=80, label=f'Unique Tags (n={len(unique_tags)})', alpha=0.7)
-    # Label tags if few
-    if len(unique_tags) <= 10:
-        for i, tag in enumerate(unique_tags):
-            ax.annotate(tag, (tag_positions[i, 0], tag_positions[i, 1]), xytext=(5, 5), textcoords='offset points')
-    ax.set_xlim(-1, max(np.max(gateway_positions[:, 0]), np.max(tag_positions[:, 0])) + 1)
-    ax.set_ylim(-1, max(np.max(gateway_positions[:, 1]), np.max(tag_positions[:, 1])) + 1)
-    ax.set_title(title)
-    ax.set_xlabel("X (m)")
-    ax.set_ylabel("Y (m)")
-    ax.legend()
-    ax.grid(True, alpha=0.3)
+    n_tags = tag_positions.shape[0]
+    if n_tags > max_tags:
+        idx = np.random.choice(n_tags, max_tags, replace=False)
+        plot_tags = tag_positions[idx]
+    else:
+        plot_tags = tag_positions
+
+    plt.scatter(plot_tags[:,0], plot_tags[:,1], c='blue', s=5, alpha=0.4, label=f'Tags (n={n_tags})')
+    plt.xlabel("X (m)")
+    plt.ylabel("Y (m)")
+    plt.title(title)
+    plt.legend()
+    plt.grid(True, alpha=0.3)
     plt.tight_layout()
     plt.show()
 
-def animate_simulation(tag_traj, gateway_positions):
-    if len(tag_traj) == 0:
-        print("No trajectory for animation.")
-        return
-    if not isinstance(tag_traj, list):
-        tag_traj = [tag_traj] * 5
-    fig, ax = plt.subplots(figsize=(10, 8))
-    ax.scatter(gateway_positions[:, 0], gateway_positions[:, 1], marker='*', s=200, c='red', label='Gateways')
-    scat = ax.scatter([], [], c='blue', s=80, label='Tags')
-
-    def init():
-        max_x = max(np.max(gateway_positions[:, 0]), np.max(tag_traj[0][:, 0])) + 1
-        max_y = max(np.max(gateway_positions[:, 1]), np.max(tag_traj[0][:, 1])) + 1
-        ax.set_xlim(-1, max_x)
-        ax.set_ylim(-1, max_y)
-        ax.set_title("Tag Positions Over Time")
-        ax.set_xlabel("X (m)")
-        ax.set_ylabel("Y (m)")
-        ax.legend()
-        ax.grid(True, alpha=0.3)
-        return scat,
-
-    def update(frame):
-        scat.set_offsets(tag_traj[frame])
-        ax.set_title(f"Tag Positions (step {frame})")
-        return scat,
-
-    ani = FuncAnimation(fig, update, frames=min(10, len(tag_traj)), init_func=init, blit=True, interval=500, repeat=True)
-    plt.show()
-
 if __name__ == "__main__":
-    plot_2d_positions(gateway_positions, last_positions, unique_tags)
+    print("\nPlotting 2D positions...")
+    plot_2d_positions(gateway_positions, tag_positions_plot, unique_tags)
 
-    if len(last_positions) > 10:
-        last_positions_limited = last_positions[:10]
-        print("Limiting to 10 tags for simulation.")
-    else:
-        last_positions_limited = last_positions
-    
-    real_trajectories = None  
-    filt_rssi, traj, hist = simulate_tags(last_positions_limited, steps=20, method="kalman", export="csv", real_trajectories=real_trajectories)
-    if filt_rssi is not None:
-        print("Final Filtered RSSI Map:\n", np.round(filt_rssi, 2))
-    else:
-        print("Simulation failed; skipping RSSI output.")
+    print("\nRunning RSSI simulation and filtering for large dataset...")
+    filtered_rssi, hist = get_filtered_rssi_vectorized(
+        tag_positions,
+        gateway_positions,
+        steps=20,
+        export_csv_path="rssi_timeseries.csv"
+    )
 
-    animate_simulation(traj, gateway_positions)
-    print("Script completed successfully!")
+    print("\nFinal Filtered RSSI Map (dBm):")
+    print(np.round(filtered_rssi, 2))
