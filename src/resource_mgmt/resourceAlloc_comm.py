@@ -1,24 +1,27 @@
-import math, random, uuid, time
+import sys, importlib, math, random, uuid, time
 import simpy
 from collections import defaultdict
 import numpy as np
 import matplotlib.pyplot as plt
 
-import os
-import sys
-current_dir = os.path.dirname(os.path.abspath(__file__))
+if "material_locator" in sys.modules:
+    print("Already loaded, reusing cached module")
+    material_locator = sys.modules["material_locator"]
+else:
+    print("Loading fresh copy...")
+    material_locator = importlib.import_module("material_locator")
 
-project_root = os.path.abspath(os.path.join(current_dir, '..', '..'))
-
-if project_root not in sys.path:
-    sys.path.append(project_root)
-
-from src.processing.material_locator import (
-    edge_gateways, door_position, user_pos,
-    is_on_grid_line, valid_pos, simulation,
-    get_rssi, get_coarse_location, cloud_computation,
-    fingerprint_dataset, mat_loc
-)
+edge_gateways = material_locator.edge_gateways
+door_position = material_locator.door_position
+user_pos = material_locator.user_pos
+is_on_grid_line = material_locator.is_on_grid_line
+valid_pos = material_locator.valid_pos
+simulation = material_locator.simulation
+get_rssi = material_locator.get_rssi
+get_coarse_location = material_locator.get_coarse_location
+cloud_computation = material_locator.cloud_computation
+fingerprint_dataset = material_locator.fingerprint_dataset
+mat_loc = material_locator.mat_loc
 
 def ms_to_sec(v): 
     return max(0.0, v) / 1000.0
@@ -113,10 +116,11 @@ class Scheduler:
         self.policy = policy
         self.nodes = {}
         for n in edges:
-            self.nodes[n["id"]] = Node(env, n, bus, fingerprint_db=None)
-        self.nodes[cloud["id"]] = Node(env, cloud, bus, fingerprint_db=None)
+            self.nodes[n["id"]] = Node(env, n, bus)
+        self.nodes[cloud["id"]] = Node(env, cloud, bus)
         self.edge_ids = [n["id"] for n in edges]
         self.cloud_id = cloud["id"]
+
         self.arrivals = 0
         self.completed = 0
         self.latencies = []
@@ -160,18 +164,17 @@ class Scheduler:
         true = msg.get("true_pos")
         pred = msg.get("refined_pos")
         if true is not None and pred is not None:
-            true_arr = np.array(true)
-            pred_arr = np.array(pred)
-            err = euclidean(true_arr, pred_arr)
+            err = euclidean(true, pred)
             self.loc_errors.append(err)
-
 
     def decide(self, task):
         size = task["size_bytes"]
+
         if self.policy == 'FCFS':
             node = self.nodes[self.cloud_id]
             self.route_counts["cloud"] += 1
             return node.id, ms_to_sec(node.uplink)
+
         elif self.policy == 'LB':
             candidates = [self.nodes[self.cloud_id]] + [self.nodes[eid] for eid in self.edge_ids]
             best = min(candidates, key=lambda n: n.estimate_finish_time(size))
@@ -182,8 +185,7 @@ class Scheduler:
             return best.id, ms_to_sec(best.uplink)
 
         edges = [self.nodes[eid] for eid in self.edge_ids]
-        best_edge = min(edges,
-                        key=lambda n: n.estimate_finish_time(size) + ms_to_sec(n.uplink) + ms_to_sec(n.downlink))
+        best_edge = min(edges, key=lambda n: n.estimate_finish_time(size) + ms_to_sec(n.uplink) + ms_to_sec(n.downlink))
         cloud = self.nodes[self.cloud_id]
         edge_e2e = best_edge.estimate_finish_time(size) + ms_to_sec(best_edge.uplink) + ms_to_sec(best_edge.downlink)
         cloud_e2e = cloud.estimate_finish_time(size) + ms_to_sec(cloud.uplink) + ms_to_sec(cloud.downlink)
@@ -215,6 +217,7 @@ def material_task_source(env, bus, material_id, rate_per_min=10):
 random_seed = 123
 simulation_time = 60.0
 arr_rate = 30
+
 edge_nodes = [
     {"id": "edge-1", "cpu": 2, "mem": 256, "throughput": 2e6, "uplink_ms": 20, "downlink_ms": 20, "gw_id": "gw1"},
     {"id": "edge-2", "cpu": 2, "mem": 256, "throughput": 2e6, "uplink_ms": 25, "downlink_ms": 25, "gw_id": "gw2"},
@@ -239,20 +242,13 @@ def run_demo_for_policy(policy):
     avg_loc_err = np.mean(sched.loc_errors) if sched.loc_errors else 0.0
     avg_lat = np.mean(sched.latencies) if sched.latencies else 0.0
 
-    print("\n Policy:", policy, " ")
-    print("Arrivals:", sched.arrivals,
-          " Cloud:", sched.route_counts['cloud'],
-          " Edge:", sched.route_counts['edge'],
-          " Completed:", completed)
+    print(f"\nPolicy: {policy}")
+    print(f"Arrivals: {sched.arrivals}, Cloud: {sched.route_counts['cloud']}, Edge: {sched.route_counts['edge']}, Completed: {completed}")
     for nid, node in sched.nodes.items():
         print(f"  Node {nid}: completed={node.completed}, util={node.busy_time / simulation_time * 100:.2f}%")
 
-    return {
-        "policy": policy,
-        "avg_latency": avg_lat,
-        "avg_util": avg_util,
-        "avg_loc_err": avg_loc_err
-    }
+    return {"policy": policy, "avg_latency": avg_lat, "avg_util": avg_util, "avg_loc_err": avg_loc_err}
+
 
 def run_all_policies():
     all_results = []
@@ -262,18 +258,18 @@ def run_all_policies():
 
     print("\nSummary:")
     for res in all_results:
-        print(f"{res['policy']:12s} Latency={res['avg_latency']:.3f}  Util={res['avg_util']:.3f}  LocErr={res['avg_loc_err']:.3f}")
+        print(f"{res['policy']:12s}  Latency={res['avg_latency']:.3f}  Util={res['avg_util']:.3f}  LocErr={res['avg_loc_err']:.3f}")
 
-    plt.figure(figsize=(6, 5))
+    plt.figure(figsize=(8, 6))
     for res in all_results:
         plt.scatter(res['avg_latency'], res['avg_loc_err'], label=res['policy'], s=100)
     plt.xlabel("Average Latency")
     plt.ylabel("Average Location Error")
-    plt.title("Policy Comparison")
+    plt.title("Policy Comparison (FCFS vs LB vs LatencyAware)")
     plt.legend()
     plt.grid(True)
     plt.show()
 
-def run_code():
-    run_all_policies
-    
+
+if __name__ == "__main__":
+    run_all_policies()
