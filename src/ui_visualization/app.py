@@ -1,105 +1,160 @@
-from flask import Flask, jsonify, request, send_file, render_template
-from threading import Thread
+import matplotlib
+matplotlib.use('Agg')
+
+from flask import Flask, render_template, request, redirect, url_for, session, flash
+import numpy as np
+import io, base64, json, os, sys
 import matplotlib.pyplot as plt
-import os
-import sys
-from resourceAlloc_comm import (
-    run_demo_for_policy,
-    edge_nodes,
-    cloud_nodes,
-    simulation_time,
-    arr_rate
-)
 
+# Set up paths before importing modules
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, BASE_DIR)
+os.chdir(BASE_DIR)
+
+import material_locator as ml
+import resouceAlloc_comm as ra
+
+# Flask setup
 app = Flask(__name__)
+app.secret_key = "your_secret_key"
 
-# Storage for simulation results
-simulation_results = {}
+# Login credentials
+users = {
+    "admin": "admin",
+    "worker1": "1234",
+    "worker2": "5678"
+}
 
-@app.route("/")
-def home():
-    # Load your main dashboard (make sure you have templates/resource_allocation.html)
-    return render_template("resource_allocation.html")
-
-@app.route("/api/run-simulation", methods=["POST"])
-def run_simulation():
-    """Run a single simulation for the selected policy."""
-    try:
-        data = request.get_json()
-        policy = data.get("policy", "FCFS")
-
-        def background_task():
-            # Run simulation in background to avoid blocking
-            result = run_demo_for_policy(policy)
-            simulation_results[policy] = result
-
-        Thread(target=background_task).start()
-
-        return jsonify({
-            "success": True,
-            "message": f"Simulation for {policy} started successfully."
-        })
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
-
-
-@app.route("/api/run-all-policies", methods=["POST"])
-def run_all_policies():
-    """Run all available scheduling policies."""
-    try:
-        policies = ["FCFS", "RoundRobin", "Priority", "Random"]
-
-        def background_task():
-            for policy in policies:
-                result = run_demo_for_policy(policy)
-                simulation_results[policy] = result
-
-        Thread(target=background_task).start()
-
-        return jsonify({
-            "success": True,
-            "message": "All policies started successfully."
-        })
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
-
-
-@app.route("/api/simulation-plot.png")
-def simulation_plot():
-    """Generate and return the latest simulation plot as an image."""
-    if not simulation_results:
-        return jsonify({"error": "No simulation results available yet."}), 404
-
-    # Create plot
-    plt.figure(figsize=(8, 5))
-    for policy, result in simulation_results.items():
-        # Expecting result to have 'x' and 'y' data (customize if needed)
-        if isinstance(result, dict) and "x" in result and "y" in result:
-            plt.plot(result["x"], result["y"], label=policy)
+# ---------- Login ----------
+@app.route("/", methods=["GET", "POST"])
+def login():
+    if request.method == "POST":
+        username = request.form.get("username")
+        password = request.form.get("password")
+        if username in users and password == users[username]:
+            session["logged_in"] = True
+            session["username"] = username
+            return redirect(url_for("search"))
         else:
-            plt.plot([], [], label=policy)  # placeholder if data missing
+            flash("Invalid username or password", "error")
+    return render_template("login.html")
 
-    plt.title("Simulation Results by Policy")
-    plt.xlabel("Time (s)")
-    plt.ylabel("Performance Metric")
-    plt.legend()
-    plt.grid(True)
 
-    # Save image
-    plot_path = "static/simulation_plot.png"
-    os.makedirs("static", exist_ok=True)
-    plt.savefig(plot_path)
+# ---------- Logout ----------
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
+
+
+# ---------- Search Page ----------
+@app.route("/search", methods=["GET", "POST"])
+def search():
+    if not session.get("logged_in"):
+        return redirect(url_for("login"))
+
+    location = None
+    searched_id = None
+    latency = None
+    error = None
+
+    if request.method == "POST":
+        searched_id = request.form.get("item_id").upper().strip()
+        if searched_id in ml.mat_loc:
+            material_pos = np.array(ml.mat_loc[searched_id])
+            coarse_zone, _, _ = ml.get_coarse_location(material_pos)
+            location = coarse_zone
+
+            # Run Edge–Cloud simulation
+            try:
+                sim_result = ra.run_demo_for_policy("LatencyAware")
+                latency = round(sim_result["avg_latency"], 3)
+                error = round(sim_result["avg_loc_err"], 3)
+            except Exception as e:
+                print(f"Simulation error: {e}")
+                latency = "N/A"
+                error = "N/A"
+
+        else:
+            location = "Not Found"
+
+    return render_template(
+        "search.html",
+        location=location,
+        searched_id=searched_id,
+        latency=latency,
+        error=error
+    )
+
+
+# ---------- Map Visualization ----------
+@app.route("/map/<item_id>")
+def map_view(item_id):
+    if not session.get("logged_in"):
+        return redirect(url_for("login"))
+
+    if item_id not in ml.mat_loc:
+        flash("Invalid Material ID")
+        return redirect(url_for("search"))
+
+    material_pos = np.array(ml.mat_loc[item_id])
+    coarse_zone, _, _ = ml.get_coarse_location(material_pos, material_id=item_id)
+    refined_location = ml.cloud_computation(material_pos, material_id=item_id)
+    path_a, _ = ml.path_analysis(ml.user_pos, material_pos, item_id)
+
+    # Plot everything
+    plt.ioff()
+    plt.clf()
+    ml.plot_all(ml.mat_loc, material_pos, coarse_zone,
+                refined_location, show_path=True,
+                path_a=path_a, selected_mat_id=item_id)
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png', bbox_inches='tight', dpi=200)
+    buf.seek(0)
+    plot_url = base64.b64encode(buf.getvalue()).decode()
     plt.close()
 
-    return send_file(plot_path, mimetype="image/png")
+    return render_template("resourcemap.html",
+                           plot_url=plot_url,
+                           item_id=item_id,
+                           coarse_zone=coarse_zone)
 
 
-@app.route("/api/simulation-status", methods=["GET"])
-def simulation_status():
-    """Check which policies have finished running."""
-    status = {p: "completed" for p in simulation_results.keys()}
-    return jsonify(status)
+# ---------- Pick Material ----------
+@app.route("/picked/<item_id>")
+def picked(item_id):
+    try:
+        if item_id in ml.mat_loc:
+            del ml.mat_loc[item_id]
+            # Save to JSON file
+            mat_loc_path = os.path.join(BASE_DIR, "mat_loc.json")
+            with open(mat_loc_path, "w") as f:
+                json.dump(ml.mat_loc, f)
+        flash(f"Material {item_id} marked as picked up", "success")
+    except Exception as e:
+        flash(f"Error updating material list: {e}", "error")
+    return redirect(url_for("search"))
 
 
+# ---------- Debug Route (Optional) ----------
+@app.route("/debug")
+def debug_info():
+    import os
+    debug_data = {
+        "current_dir": os.getcwd(),
+        "app_dir": os.path.dirname(os.path.abspath(__file__)),
+        "mat_loc_count": len(ml.mat_loc),
+        "sample_materials": list(ml.mat_loc.keys())[:10],
+        "edge_gateways": ml.edge_gateways
+    }
+    return f"<pre>{json.dumps(debug_data, indent=2)}</pre>"
+
+
+# ---------- Run ----------
 if __name__ == "__main__":
+    print("\n" + "="*60)
+    print(f"Flask server starting...")
+    print(f"Materials loaded: {len(ml.mat_loc)}")
+    print(f"Sample IDs: {', '.join(list(ml.mat_loc.keys())[:5])}")
+    print("="*60 + "\n")
     app.run(debug=True)
