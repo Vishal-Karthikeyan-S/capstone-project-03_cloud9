@@ -12,7 +12,7 @@ sys.path.insert(0, BASE_DIR)
 os.chdir(BASE_DIR)
 
 import material_locator as ml
-import resouceAlloc_comm as ra
+import resourceAlloc_comm as ra
 
 # Flask setup
 app = Flask(__name__)
