@@ -102,17 +102,25 @@ def map_view(item_id):
     refined_location = ml.cloud_computation(material_pos, material_id=item_id)
     path_a, _ = ml.path_analysis(ml.user_pos, material_pos, item_id)
 
-    # Plot everything
+    # Plot everything with optimized settings
     plt.ioff()
-    plt.clf()
+    plt.close('all')  # Close any existing plots
+    
+    # Create the plot
     ml.plot_all(ml.mat_loc, material_pos, coarse_zone,
                 refined_location, show_path=True,
                 path_a=path_a, selected_mat_id=item_id)
+    
+    # Get current figure and adjust size
+    fig = plt.gcf()
+    fig.set_size_inches(12, 6)  # Force a specific size: width=12, height=6
+    
     buf = io.BytesIO()
-    plt.savefig(buf, format='png', bbox_inches='tight', dpi=200)
+    # Use lower DPI and tight layout
+    plt.savefig(buf, format='png', bbox_inches='tight', dpi=80, pad_inches=0.2)
     buf.seek(0)
     plot_url = base64.b64encode(buf.getvalue()).decode()
-    plt.close()
+    plt.close('all')
 
     return render_template("resourcemap.html",
                            plot_url=plot_url,
