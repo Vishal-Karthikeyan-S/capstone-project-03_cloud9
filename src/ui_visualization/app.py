@@ -1,88 +1,168 @@
-from flask import Flask, render_template, request, redirect, url_for, flash, Response
+import matplotlib
+matplotlib.use('Agg')
+
+from flask import Flask, render_template, request, redirect, url_for, session, flash
+import numpy as np
+import io, base64, json, os, sys
 import matplotlib.pyplot as plt
-import io
+
+# Set up paths before importing modules
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, BASE_DIR)
+os.chdir(BASE_DIR)
 
 import material_locator as ml
+import resourceAlloc_comm as ra
 
+# Flask setup
 app = Flask(__name__)
-app.secret_key = "edge_project_demo"
+app.secret_key = "your_secret_key"
 
-# Dummy credentials
-users = {"worker1": "1234", "worker2": "abcd"}
+# Login credentials
+users = {
+    "admin": "admin",
+    "worker1": "1234",
+    "worker2": "5678"
+}
 
-# ---------------- Login ----------------
+# ---------- Login ----------
 @app.route("/", methods=["GET", "POST"])
 def login():
     if request.method == "POST":
-        username = request.form["username"]
-        password = request.form["password"]
-
-        if username in users and users[username] == password:
-            flash(f"Welcome {username}!", "success")
+        username = request.form.get("username")
+        password = request.form.get("password")
+        if username in users and password == users[username]:
+            session["logged_in"] = True
+            session["username"] = username
             return redirect(url_for("search"))
         else:
-            flash("Invalid Username or Password", "error")
+            flash("Invalid username or password", "error")
     return render_template("login.html")
 
 
-# ---------------- Search ----------------
+# ---------- Logout ----------
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
+
+
+# ---------- Search Page ----------
 @app.route("/search", methods=["GET", "POST"])
 def search():
+    if not session.get("logged_in"):
+        return redirect(url_for("login"))
+
     location = None
-    material_id = None
+    searched_id = None
+    latency = None
+    error = None
+
     if request.method == "POST":
-        material_id = request.form["item_id"].strip().upper()
-        
-        # ✅ Check if this material exists in real data
-        if material_id in ml.mat_loc:
-            tag_pos = ml.mat_loc[material_id]
-            coarse_zone, max_rssi, rssi_details = ml.get_coarse_location(ml.np.array(tag_pos))
-            location = f"{coarse_zone} (approx.)"
+        searched_id = request.form.get("item_id").upper().strip()
+        if searched_id in ml.mat_loc:
+            material_pos = np.array(ml.mat_loc[searched_id])
+            coarse_zone, _, _ = ml.get_coarse_location(material_pos)
+            location = coarse_zone
+
+            # Run Edge–Cloud simulation
+            try:
+                sim_result = ra.run_demo_for_policy("LatencyAware")
+                latency = round(sim_result["avg_latency"], 3)
+                error = round(sim_result["avg_loc_err"], 3)
+            except Exception as e:
+                print(f"Simulation error: {e}")
+                latency = "N/A"
+                error = "N/A"
+
         else:
-            location = "Material Not Found"
-            
-    return render_template("search.html", location=location, material_id=material_id)
+            location = "Not Found"
+
+    return render_template(
+        "search.html",
+        location=location,
+        searched_id=searched_id,
+        latency=latency,
+        error=error
+    )
 
 
-# ---------------- Map ----------------
-@app.route("/map")
-def map_view():
-    return render_template("resourcemap.html")
+# ---------- Map Visualization ----------
+@app.route("/map/<item_id>")
+def map_view(item_id):
+    if not session.get("logged_in"):
+        return redirect(url_for("login"))
+
+    if item_id not in ml.mat_loc:
+        flash("Invalid Material ID")
+        return redirect(url_for("search"))
+
+    material_pos = np.array(ml.mat_loc[item_id])
+    coarse_zone, _, _ = ml.get_coarse_location(material_pos, material_id=item_id)
+    refined_location = ml.cloud_computation(material_pos, material_id=item_id)
+    path_a, _ = ml.path_analysis(ml.user_pos, material_pos, item_id)
+
+    # Plot everything with optimized settings
+    plt.ioff()
+    plt.close('all')  # Close any existing plots
+    
+    # Create the plot
+    ml.plot_all(ml.mat_loc, material_pos, coarse_zone,
+                refined_location, show_path=True,
+                path_a=path_a, selected_mat_id=item_id)
+    
+    # Get current figure and adjust size
+    fig = plt.gcf()
+    fig.set_size_inches(12, 6)  # Force a specific size: width=12, height=6
+    
+    buf = io.BytesIO()
+    # Use lower DPI and tight layout
+    plt.savefig(buf, format='png', bbox_inches='tight', dpi=80, pad_inches=0.2)
+    buf.seek(0)
+    plot_url = base64.b64encode(buf.getvalue()).decode()
+    plt.close('all')
+
+    return render_template("resourcemap.html",
+                           plot_url=plot_url,
+                           item_id=item_id,
+                           coarse_zone=coarse_zone)
 
 
-@app.route("/plot.png")
-def plot_png():
-    fig, ax = plt.subplots()
-
-    #  Gateways (red squares)
-    for zone, pos in ml.edge_gateways.items():
-        ax.plot(pos[0], pos[1], 'rs', markersize=8)
-        ax.text(pos[0] + 1, pos[1], zone, fontsize=8)
-
-    #  Materials (blue dots)
-    for mat_id, (x, y) in ml.mat_loc.items():
-        ax.plot(x, y, 'bo')
-        ax.text(x + 1, y + 1, mat_id, fontsize=6)
-
-    ax.set_title("Factory Resource Map (Live Layout)")
-    ax.set_xlim(0, 110)
-    ax.set_ylim(0, 110)
-    ax.set_xlabel("X-axis")
-    ax.set_ylabel("Y-axis")
-
-    output = io.BytesIO()
-    plt.savefig(output, format='png', bbox_inches="tight")
-    plt.close(fig)
-    output.seek(0)
-    return Response(output.getvalue(), mimetype='image/png')
+# ---------- Pick Material ----------
+@app.route("/picked/<item_id>")
+def picked(item_id):
+    try:
+        if item_id in ml.mat_loc:
+            del ml.mat_loc[item_id]
+            # Save to JSON file
+            mat_loc_path = os.path.join(BASE_DIR, "mat_loc.json")
+            with open(mat_loc_path, "w") as f:
+                json.dump(ml.mat_loc, f)
+        flash(f"Material {item_id} marked as picked up", "success")
+    except Exception as e:
+        flash(f"Error updating material list: {e}", "error")
+    return redirect(url_for("search"))
 
 
-# ---------------- Item Found ----------------
-@app.route("/itemfound")
-def itemfound():
-    return render_template("itemfound.html")
+# ---------- Debug Route (Optional) ----------
+@app.route("/debug")
+def debug_info():
+    import os
+    debug_data = {
+        "current_dir": os.getcwd(),
+        "app_dir": os.path.dirname(os.path.abspath(__file__)),
+        "mat_loc_count": len(ml.mat_loc),
+        "sample_materials": list(ml.mat_loc.keys())[:10],
+        "edge_gateways": ml.edge_gateways
+    }
+    return f"<pre>{json.dumps(debug_data, indent=2)}</pre>"
 
 
+# ---------- Run ----------
 if __name__ == "__main__":
+    print("\n" + "="*60)
+    print(f"Flask server starting...")
+    print(f"Materials loaded: {len(ml.mat_loc)}")
+    print(f"Sample IDs: {', '.join(list(ml.mat_loc.keys())[:5])}")
+    print("="*60 + "\n")
     app.run(debug=True)
-

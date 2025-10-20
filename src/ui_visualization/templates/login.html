@@ -1,4 +1,14 @@
 <!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Document</title>
+</head>
+<body>
+  
+</body>
+</html>
 <html>
 <head>
     <title>Worker Login</title>
@@ -8,11 +18,10 @@
 <div class="box">
     <h2>Worker Login</h2>
     <form method="post">
-        <label>Username</label>
-        <input type="text" name="username" required>
-        <label>Password</label>
-        <input type="password" name="password" required>
-        <button type="submit">Login</button>
+        <label for="username-input">Username</label>
+        <input type="text" id="username-input" name="username" required>
+        <label for="password-input">Password</label>
+        <input type="password" id="password-input" name="password" required>
     </form>
     {% with messages = get_flashed_messages(with_categories=true) %}
       {% if messages %}

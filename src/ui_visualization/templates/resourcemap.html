@@ -1,41 +1,233 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>Resource Map</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Resource Map for {{ item_id }}</title>
     <style>
-        .map-container {
-            margin-top: 10px;   /* reduce gap */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
         }
-        img {
-            margin: 10px 0;     /* reduce space above and below */
-            border: 2px solid #ddd;
-            border-radius: 8px;
-            padding: 5px;
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+            overflow-x: hidden;
+        }
+
+        .container {
+            max-width: 1600px;
+            margin: 0 auto;
             background: white;
-            max-width: 100%;    /* responsive */
+            border-radius: 15px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 25px 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2rem;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            font-size: 1.1rem;
+            opacity: 0.9;
+        }
+
+        .content {
+            padding: 30px;
+        }
+
+        .map-container {
+            width: 100%;
+            max-height: 70vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            margin: 20px 0;
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 15px;
+        }
+
+        .map-container img {
+            max-width: 100%;
+            max-height: 65vh;
+            width: auto;
             height: auto;
+            display: block;
+            border-radius: 8px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+            object-fit: contain;
         }
-        p {
-            margin: 5px 0 10px 0;  /* tighten spacing */
+
+        .info-box {
+            background: #f0f4ff;
+            border-left: 4px solid #667eea;
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 8px;
         }
+
+        .info-box h3 {
+            color: #667eea;
+            margin-bottom: 10px;
+            font-size: 1.2rem;
+        }
+
+        .info-box p {
+            color: #555;
+            font-size: 1rem;
+            line-height: 1.6;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 15px;
+            justify-content: center;
+            margin-top: 30px;
+            flex-wrap: wrap;
+        }
+
         .btn {
-            margin-top: 15px;   /* small gap after image */
+            padding: 12px 30px;
+            border: none;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            text-decoration: none;
             display: inline-block;
-            width: 120px;       /* same width for buttons */
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-success {
+            background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%);
+            color: white;
+        }
+
+        .btn-success:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 15px rgba(56, 239, 125, 0.4);
+        }
+
+        .btn-secondary {
+            background: #6c757d;
+            color: white;
+        }
+
+        .btn-secondary:hover {
+            background: #5a6268;
+            transform: translateY(-2px);
+        }
+
+        /* Responsive Design */
+        @media (max-width: 768px) {
+            .header h1 {
+                font-size: 1.5rem;
+            }
+
+            .header p {
+                font-size: 0.9rem;
+            }
+
+            .content {
+                padding: 20px;
+            }
+
+            .button-group {
+                flex-direction: column;
+            }
+
+            .btn {
+                width: 100%;
+            }
+        }
+
+        /* Loading animation */
+        .loading {
+            text-align: center;
+            padding: 40px;
+        }
+
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
         }
     </style>
 </head>
 <body>
-<div class="box">
-    <h2 style="margin-bottom:10px;">Resource Map</h2>
-    <p>Red squares = Gateways, Blue dots = Materials</p>
+    <div class="container">
+        <div class="header">
+            <h1>🗺️ Resource Map for {{ item_id }}</h1>
+            <p>Allocated Resource: <strong>{{ coarse_zone }}</strong></p>
+        </div>
 
-    <div class="map-container">
-        <img src="{{ url_for('plot_png') }}" alt="Factory Map">
+        <div class="content">
+            <div class="info-box">
+                <h3>📍 Location Details</h3>
+                <p>
+                    <strong>Material ID:</strong> {{ item_id }}<br>
+                    <strong>Coarse Zone:</strong> {{ coarse_zone }}<br>
+                    <strong>Status:</strong> <span style="color: #38ef7d; font-weight: 600;">Located Successfully</span>
+                </p>
+            </div>
+
+            <div class="map-container">
+                {% if plot_url %}
+                    <img src="data:image/png;base64,{{ plot_url }}" alt="Material Location Map">
+                {% else %}
+                    <div class="loading">
+                        <div class="spinner"></div>
+                        <p style="margin-top: 20px; color: #666;">Loading map...</p>
+                    </div>
+                {% endif %}
+            </div>
+
+            <div class="button-group">
+                <a href="{{ url_for('picked', item_id=item_id) }}" class="btn btn-success">
+                    ✅ Mark as Picked Up
+                </a>
+                <a href="{{ url_for('search') }}" class="btn btn-primary">
+                    🔍 Search Another Material
+                </a>
+                <a href="{{ url_for('logout') }}" class="btn btn-secondary">
+                    🚪 Logout
+                </a>
+            </div>
+        </div>
     </div>
-
-    <a href="{{ url_for('search') }}" class="btn">Back to Search</a>
-</div>
 </body>
 </html>
